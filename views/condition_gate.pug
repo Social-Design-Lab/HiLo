@@ -42,4 +42,7 @@ block content
           | #{button}
 
 block scripts
+  if requiresPost
+    script().
+      window.hiloPageLogPath = "/make-post/#{condition}";
   script(src='/public/js/script.js')

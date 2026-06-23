@@ -278,14 +278,19 @@ function escapeHtml(value) {
     return $('<div>').text(value || '').html();
 }
 
-function applyScheduledUserPostActivity(event) {
+function applyUserPostNotificationActivity(event) {
     const card = $(`.ui.fluid.card[type='userPost'][postID='${event.postID}']`).first();
     if (!card.length) return;
 
     if (event.type === 'like') {
         const label = card.find('a.ui.basic.red.left.pointing.label.count').first();
         const currentLikes = parseInt(label.text(), 10) || 0;
-        label.text(currentLikes + 1);
+        const userOwnLike = card.find('.ui.like.button').first().hasClass('red') ? 1 : 0;
+        const actorLikes = Number(event.count);
+        const nextLikes = Number.isFinite(actorLikes) ?
+            Math.max(currentLikes, actorLikes + userOwnLike) :
+            currentLikes + 1;
+        label.text(nextLikes);
         return;
     }
 
@@ -304,6 +309,13 @@ function applyScheduledUserPostActivity(event) {
         const actorPicture = actor.picture ? `/profile_pictures/${escapeHtml(actor.picture)}` : '/public/picture.svg';
         const time = event.at ? humanized_time_span(new Date(event.at)) : '';
         const body = escapeHtml(event.body);
+        const duplicateComment = comments.find('.comment').filter(function() {
+            const existingAuthor = $(this).find('.author').first().text().trim();
+            const existingBody = $(this).find('.text').first().text().trim();
+            return existingAuthor === (actor.name || actor.username || '') && existingBody === (event.body || '').trim();
+        }).length > 0;
+
+        if (duplicateComment) return;
 
         comments.append(`
             <div class="comment" commentID="${escapeHtml(event.commentID)}">
@@ -322,30 +334,29 @@ function applyScheduledUserPostActivity(event) {
     }
 }
 
-function scheduleUserPostActivity() {
-    if (!Array.isArray(window.scheduledUserPostActivity)) return;
+function removeDuplicateRenderedComments() {
+    $('.ui.fluid.card[type="userPost"] .ui.comments').each(function() {
+        const seenComments = {};
 
-    window.userPostActivityTimers = window.userPostActivityTimers || [];
-    window.userPostActivityTimers.forEach(clearTimeout);
-    window.userPostActivityTimers = [];
-    window.appliedScheduledUserPostActivity = window.appliedScheduledUserPostActivity || {};
+        $(this).find('.comment').each(function() {
+            const comment = $(this);
+            const author = comment.find('.author').first().text().trim();
+            const body = comment.find('.text').first().text().trim();
+            const key = `${author}::${body}`;
 
-    window.scheduledUserPostActivity.forEach(function(event) {
-        const key = `${event.type}:${event.postID}:${event.commentID || event.at}`;
-        if (window.appliedScheduledUserPostActivity[key]) return;
+            if (seenComments[key]) {
+                comment.remove();
+                return;
+            }
 
-        const delay = Math.max(0, Number(event.at) - Date.now());
-        const timer = setTimeout(function() {
-            if (window.appliedScheduledUserPostActivity[key]) return;
-            window.appliedScheduledUserPostActivity[key] = true;
-            applyScheduledUserPostActivity(event);
-        }, delay);
-
-        window.userPostActivityTimers.push(timer);
+            seenComments[key] = true;
+        });
     });
 }
 
 function initPostFunctionalities() {
+    removeDuplicateRenderedComments();
+
     $(`#content .fluid.card .img img, #content img.ui.avatar.image, #content a.avatar img, .ui.card .image img`).visibility({
         type: 'image'
     });
@@ -492,10 +503,9 @@ function initPostFunctionalities() {
             }
         }
     });
-
-    scheduleUserPostActivity();
 }
 
 window.initPostFunctionalities = initPostFunctionalities;
+window.applyUserPostNotificationActivity = applyUserPostNotificationActivity;
 
 $(window).on('load', initPostFunctionalities);

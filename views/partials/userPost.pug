@@ -1,4 +1,4 @@
-.ui.fluid.card(u_postID=val.id, type='userPost', postID=val.postID)
+.ui.fluid.card(id='user-post-' + val.postID, u_postID=val.id, type='userPost', postID=val.postID)
   .content
     .right.floated.time.meta=(val.absTime.getTime())
     a.ui.avatar.image(href='/me')
