@@ -4,6 +4,7 @@ dotenv.config({ path: '.env' });
 const Actor = require('./models/Actor.js');
 const Script = require('./models/Script.js');
 const User = require('./models/User.js');
+const { getConditionSuffix, resolveConditionOrder } = require('./lib/conditionOrder');
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
@@ -12,13 +13,6 @@ const color_start = '\x1b[33m%s\x1b[0m';
 const color_success = '\x1b[32m%s\x1b[0m';
 
 const SESSION_MS = 180000;
-const SESSION_SUFFIXES = {
-    1: 'PH',
-    2: 'PL',
-    3: 'NH',
-    4: 'NL'
-};
-
 const PARTICIPANT_COLUMNS = [
     'ParticipantID',
     'TotalLikes_PH',
@@ -191,14 +185,14 @@ function sum(numbers) {
     return (numbers || []).reduce((total, value) => total + (Number(value) || 0), 0);
 }
 
-function getSessionUserPost(user, session) {
+function getConditionUserPost(user, condition) {
     return (user.posts || [])
-        .filter(post => Number(post.condition) === Number(session))
+        .filter(post => Number(post.condition) === Number(condition))
         .sort((a, b) => toDateMs(a.absTime) - toDateMs(b.absTime))[0];
 }
 
-function getSessionWindow(user, session) {
-    const userPost = getSessionUserPost(user, session);
+function getConditionWindow(user, condition) {
+    const userPost = getConditionUserPost(user, condition);
     const start = toDateMs(userPost?.absTime);
     if (!start) return null;
     return {
@@ -206,6 +200,24 @@ function getSessionWindow(user, session) {
         end: start + SESSION_MS,
         post: userPost
     };
+}
+
+function getSessionForCondition(user, condition) {
+    const userPost = getConditionUserPost(user, condition);
+    if (userPost?.session) return Number(userPost.session);
+
+    const order = resolveConditionOrder(user);
+    const index = order.findIndex(item => Number(item) === Number(condition));
+    return index === -1 ? Number(condition) : index + 1;
+}
+
+function getPreviousConditionWindow(user, condition) {
+    const session = getSessionForCondition(user, condition);
+    if (!session || session <= 1) return null;
+
+    const order = resolveConditionOrder(user);
+    const previousCondition = order[session - 2];
+    return previousCondition ? getConditionWindow(user, previousCondition) : null;
 }
 
 function inWindow(time, window) {
@@ -246,14 +258,14 @@ function timeOnPages(user, predicate, window = null) {
     return total;
 }
 
-function makePostTime(user, session) {
-    const currentWindow = getSessionWindow(user, session);
+function makePostTime(user, condition) {
+    const currentWindow = getConditionWindow(user, condition);
     if (!currentWindow) return 0;
 
-    const exactMakePostTime = timeOnPages(user, page => page === `/make-post/${session}`);
+    const exactMakePostTime = timeOnPages(user, page => page === `/make-post/${condition}`);
     if (exactMakePostTime > 0) return exactMakePostTime;
 
-    const previousWindow = getSessionWindow(user, session - 1);
+    const previousWindow = getPreviousConditionWindow(user, condition);
     const lowerBound = previousWindow ? previousWindow.end : toDateMs(user.createdAt);
     const logs = normalizePageLog(user)
         .filter(item => item.page === '/' && item.time <= currentWindow.start && (!lowerBound || item.time >= lowerBound));
@@ -262,9 +274,9 @@ function makePostTime(user, session) {
     return Math.max(currentWindow.start - gateVisit.time, 0);
 }
 
-function getSessionFeedActions(user, session) {
+function getConditionFeedActions(user, condition) {
     return (user.feedAction || [])
-        .filter(action => action.post && String(action.post.condition) === String(session));
+        .filter(action => action.post && String(action.post.condition) === String(condition));
 }
 
 function getFeedActionForPost(user, actorPost) {
@@ -308,10 +320,10 @@ function participantSummaryRows(users) {
     for (const user of users) {
         const record = { ParticipantID: participantID(user) };
 
-        for (const session of [1, 2, 3, 4]) {
-            const suffix = SESSION_SUFFIXES[session];
-            const window = getSessionWindow(user, session);
-            const feedActions = getSessionFeedActions(user, session);
+        for (const condition of [1, 2, 3, 4]) {
+            const suffix = getConditionSuffix(condition);
+            const window = getConditionWindow(user, condition);
+            const feedActions = getConditionFeedActions(user, condition);
 
             record[`TotalLikes_${suffix}`] = feedActions.filter(action => action.liked).length;
             record[`TotalComments_${suffix}`] = feedActions.reduce((total, action) => {
@@ -325,7 +337,7 @@ function participantSummaryRows(users) {
                 window
             );
             record[`TotalNotifCheck_${suffix}`] = countPageEvents(user, page => page === '/notifications', window);
-            record[`TotalTimeMakePost_${suffix}`] = seconds(makePostTime(user, session));
+            record[`TotalTimeMakePost_${suffix}`] = seconds(makePostTime(user, condition));
             record[`TotalDismissClick_${suffix}`] = countPageEvents(user, page => page.startsWith('/notification-popup/dismiss/'), window);
             record[`TotalGotoPostClicks_${suffix}`] = countPageEvents(user, page => page.startsWith('/notification-popup/go-to-post/'), window);
         }

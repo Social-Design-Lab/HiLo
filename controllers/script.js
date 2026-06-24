@@ -4,6 +4,7 @@ const Notification = require('../models/Notification');
 const helpers = require('./helpers');
 const _ = require('lodash');
 const dotenv = require('dotenv');
+const { getConditionForSession, getCurrentSession } = require('../lib/conditionOrder');
 dotenv.config({ path: '.env' }); // See the file .env.example for the structure of .env
 
 let script_feed = [];
@@ -19,15 +20,19 @@ function getConditionPrompt(condition) {
 }
 
 function renderMakePostGate(res, user) {
-  if (user.condition > 4) {
+  const currentSession = getCurrentSession(user);
+  const currentCondition = getConditionForSession(user, currentSession);
+
+  if (currentSession > 4) {
     return renderEndExperiment(res, user);
   }
 
   return res.render("condition_gate", {
     title: "Before Session",
-    message: getConditionPrompt(user.condition),
+    message: getConditionPrompt(currentCondition),
     requiresPost: true,
-    condition: user.condition,
+    condition: currentCondition,
+    session: currentSession,
     userCreatedAt: user.createdAt
   });
 }
@@ -160,22 +165,24 @@ exports.getScript = async (req, res, next) => {
       await user.save();
     }
 
-    if (user.condition > 4) {
+    const currentSession = getCurrentSession(user);
+    const currentCondition = getConditionForSession(user, currentSession);
+
+    if (currentSession > 4) {
       return renderEndExperiment(res, user);
     }
 
-    if (req.query.action === "continue" && user.condition <= 4) {
+    if (req.query.action === "continue" && currentSession <= 4) {
       console.log("continue");
       return renderMakePostGate(res, user);
     }
 
     // const currentCondition = computeCondition(user.createdAt, 15000, 4); // 15000 for testing, 180000 for real
-    const currentCondition = user.condition;
     const currentConditionPosts = user.posts
       .filter(post => String(post.condition) === String(currentCondition))
       .sort((a, b) => b.absTime - a.absTime);
 
-    if (user.condition <= 4 && currentConditionPosts.length === 0) {
+    if (currentSession <= 4 && currentConditionPosts.length === 0) {
       user.conditionStart = null;
       await user.save();
       return renderMakePostGate(res, user);
@@ -275,7 +282,7 @@ exports.getScript = async (req, res, next) => {
     );
 
     console.log("Script Size is now: " + finalfeed.length);
-    console.log(`Rendering Condition ${currentCondition} — ${script_feed.length} posts found`);
+    console.log(`Rendering Session ${currentSession}, Condition ${currentCondition} — ${script_feed.length} posts found`);
 
     // ✅ Nothing for Pug to calculate anymore
     res.render("script", {
@@ -329,21 +336,24 @@ exports.newPost = async(req, res, next) => {
     try {
         const user = await User.findById(req.user.id).exec();
         const body = (req.body.body || "").trim();
+        const currentSession = getCurrentSession(user);
+        const currentCondition = getConditionForSession(user, currentSession);
 
-        if (user.condition > 4) {
+        if (currentSession > 4) {
             return res.redirect('/');
         }
 
         if (req.file && body) {
             user.numPosts = user.numPosts + 1; // Count begins at 0
             const currDate = Date.now();
-            const currentCondition = String(user.condition);
+            const currentConditionString = String(currentCondition);
 
             let post = {
                 type: "user_post",
                 postID: user.numPosts,
                 body,
-                condition: user.condition,
+                condition: currentCondition,
+                session: currentSession,
                 picture: req.file.filename,
                 liked: false,
                 likes: 0,
@@ -354,7 +364,7 @@ exports.newPost = async(req, res, next) => {
 
             // Find any Actor replies (comments) that go along with this post
             const actor_replies = await Notification.find({
-                    condition: { "$in": ["", currentCondition] }
+                    condition: { "$in": ["", currentConditionString] }
                 })
                 .where('notificationType').equals('reply')
                 .populate('actor')

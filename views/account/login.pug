@@ -11,12 +11,25 @@ block content
       h2.ui.header Sign in
       form.ui.form(action='/login', method='POST')
         input(type='hidden', name='_csrf', value=_csrf)
+        if order
+          input(type='hidden', name='conditionOrderNumber', value=order)
+          .field
+            label(for='conditionOrderDisplay') Condition Order
+            input(type='text', id='conditionOrderDisplay', value=orderLabel, readonly)
         .field
           label(for='mturkID') Participant ID
           input(type='text', name='mturkID', id='mturkID', placeholder='Enter your Participant ID', required)
         .field
           label(for='studyDate') Study Date
           input(type='date', name='studyDate', id='studyDate', required)
+        unless order
+          .field
+            label(for='conditionOrderNumber') Condition Order
+            select.ui.dropdown(name='conditionOrderNumber', id='conditionOrderNumber', required)
+              option(value='1') Order 1: PH, PL, NH, NL
+              option(value='2') Order 2: PL, PH, NL, NH
+              option(value='3') Order 3: NH, NL, PH, PL
+              option(value='4') Order 4: NL, NH, PL, PH
         button.ui.large.button.blue(type='submit') Log In
       //- .ui.horizontal.divider
       //-   | Or

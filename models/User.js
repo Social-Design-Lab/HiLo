@@ -24,8 +24,10 @@ const userSchema = new mongoose.Schema({
     lastNotifyVisit: Date, // Absolute Time; Indicates the most recent visit to /notifications. First initialization is at account creation.
     createdAt: Date, // Absolute Time the user was created
     consent: { type: Boolean, default: false }, // Indicates if user has proceeded through the Welcome & community rule pages
-    conditionStart: { type: Date, default: null }, // Used to calculate conditions instead of createdAt, set when the user creates a new post and the condition is supposed to start
-    condition: { type: Number, default: 1 }, // condition that the user is currently in, is incremented after the set amount of time has passed
+    conditionStart: { type: Date, default: null }, // Used to calculate sessions instead of createdAt, set when the user creates a new post and the session is supposed to start
+    condition: { type: Number, default: 1 }, // Session number the user is currently in, incremented after each session
+    conditionOrderNumber: { type: Number, default: 1 }, // Researcher-selected counterbalance order, 1-4
+    conditionOrder: { type: [Number], default: [1, 2, 3, 4] }, // Maps session position to experimental condition number
     
     mturkID: { type: String, unique: true }, // MTurkID
     studyDate: String, // Researcher-entered study/session date in YYYY-MM-DD format
@@ -52,7 +54,8 @@ const userSchema = new mongoose.Schema({
     posts: [new Schema({
         type: String, // Value is always: 'user_post'
         postID: Number, // ID for user post (0,1,2,3...)
-        condition: Number, // Session/condition this participant post belongs to
+        condition: Number, // Experimental condition this participant post belongs to
+        session: Number, // Session position this participant post belongs to
         body: { type: String, default: '', trim: true }, // Text(body) of post
         picture: String, // Picture (file path) for post
         liked: { type: Boolean, default: false }, // Indicates if the user has liked the post

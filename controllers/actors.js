@@ -4,6 +4,7 @@ const User = require('../models/User');
 const helpers = require('./helpers');
 const _ = require('lodash');
 const dotenv = require('dotenv');
+const { getConditionForSession, getCurrentSession } = require('../lib/conditionOrder');
 dotenv.config({ path: '.env' }); // See the file .env.example for the structure of .env
 
 /**
@@ -69,7 +70,7 @@ exports.getActor = async(req, res, next) => {
         const isBlocked = user.blocked.includes(req.params.userId);
         const isReported = user.reported.includes(req.params.userId);
 
-        const currentCondition = user.condition;
+        const currentCondition = getConditionForSession(user, getCurrentSession(user));
 
         // Fixed query to show actor posts when clicking on specific profiles. May have to update for condition later. 
         const script_feed = await Script.find({

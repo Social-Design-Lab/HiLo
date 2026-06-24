@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Notification = require('../models/Notification.js');
 const helpers = require('./helpers');
 const _ = require('lodash');
+const { getConditionForSession, getCurrentSession } = require('../lib/conditionOrder');
 
 /**
  * GET /notifications, /getBell
@@ -23,7 +24,7 @@ exports.getNotifications = async(req, res) => {
                 }).exec();
             const currDate = Date.now();
             const lastNotifyVisit = user.lastNotifyVisit; //Absolute Date
-            const currentCondition = String(user.condition || "");
+            const currentCondition = String(getConditionForSession(user, getCurrentSession(user)) || "");
             const notification_feed = await Notification.find({
                     $or: [
                         { userPostID: { $exists: true } },

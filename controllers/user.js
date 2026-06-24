@@ -3,6 +3,7 @@ const validator = require('validator');
 const dotenv = require('dotenv');
 dotenv.config({ path: '.env' }); // See the file .env.example for the structure of .env
 const User = require('../models/User');
+const { getConditionOrder, getConditionOrderLabel, normalizeOrderNumber } = require('../lib/conditionOrder');
 
 /**
  * GET /login
@@ -12,10 +13,13 @@ exports.getLogin = (req, res) => {
     if (req.user) {
         return res.redirect('/');
     }
+    const order = req.query.order ? normalizeOrderNumber(req.query.order) : null;
     res.render('account/login', {
         title: 'Login',
         site_picture: process.env.SITE_PICTURE,
-        r_id: req.query.r_id
+        r_id: req.query.r_id,
+        order,
+        orderLabel: order ? getConditionOrderLabel(order) : null
     });
 };
 
@@ -26,6 +30,8 @@ exports.getLogin = (req, res) => {
 exports.postLogin = async (req, res, next) => {
     const mturkID = req.body.mturkID?.trim();
     const studyDate = req.body.studyDate?.trim();
+    const conditionOrderNumber = normalizeOrderNumber(req.body.conditionOrderNumber || req.query.order);
+    const conditionOrder = getConditionOrder(conditionOrderNumber);
 
     if (!mturkID) {
         req.flash('errors', { msg: 'Please enter your Researcher ID (MTurk ID).' });
@@ -61,6 +67,8 @@ exports.postLogin = async (req, res, next) => {
                 email: mturkID,
                 password: mturkID,
                 experimentalCondition: experimentalCondition,
+                conditionOrderNumber,
+                conditionOrder,
                 endSurveyLink: surveyLink,
                 active: true,
                 createdAt: currDate,
@@ -69,6 +77,10 @@ exports.postLogin = async (req, res, next) => {
             await user.save();
         } else {
             user.studyDate = studyDate;
+            if ((user.posts || []).length === 0 && Number(user.condition || 1) === 1) {
+                user.conditionOrderNumber = conditionOrderNumber;
+                user.conditionOrder = conditionOrder;
+            }
             await user.save();
         }
 
