@@ -5,6 +5,191 @@ const helpers = require('./helpers');
 const _ = require('lodash');
 const { getConditionForSession, getCurrentSession } = require('../lib/conditionOrder');
 
+function actorDisplayName(actor) {
+    return actor && actor.profile ? actor.profile.name : 'Someone';
+}
+
+function postActivityStats(notifications, postID, scheduledAt) {
+    const postNotifications = notifications.filter(notification => {
+        return String(notification.postID) === String(postID) &&
+            (!scheduledAt || notification.time <= scheduledAt);
+    });
+    const likeCount = postNotifications
+        .filter(notification => notification.action === 'like')
+        .reduce((total, notification) => total + (notification.numLikes || 0), 0);
+    const commentCount = postNotifications
+        .filter(notification => notification.action === 'reply')
+        .length;
+
+    return {
+        likeCount,
+        commentCount,
+        activityCount: likeCount + commentCount
+    };
+}
+
+function formatActivitySummary(stats) {
+    const likeLabel = stats.likeCount === 1 ? 'like' : 'likes';
+    const commentLabel = stats.commentCount === 1 ? 'comment' : 'comments';
+    return `Your post now has ${stats.likeCount} ${likeLabel} and ${stats.commentCount} ${commentLabel}.`;
+}
+
+function buildPopupNotifications(finalNotify) {
+    return finalNotify
+        .filter(notification => notification.action === 'like' || notification.action === 'reply')
+        .map(notification => {
+            const stats = postActivityStats(finalNotify, notification.postID);
+            if (notification.action === 'like') {
+                const actors = notification.actors || [];
+                const firstActor = actors[0];
+                const actorName = actorDisplayName(firstActor);
+                const otherCount = Math.max((notification.numLikes || actors.length || 1) - 1, 0);
+                const popupKey = `${notification.key}_${notification.time}_${notification.numLikes || actors.length || 1}`;
+                return {
+                    key: popupKey,
+                    action: notification.action,
+                    postID: notification.postID,
+                    time: notification.time,
+                    activity: {
+                        type: 'like',
+                        postID: notification.postID,
+                        count: notification.numLikes || actors.length || 1,
+                        stats,
+                        key: popupKey
+                    },
+                    summary: formatActivitySummary(stats),
+                    message: otherCount > 0 ?
+                        `${actorName} & ${otherCount} others liked your post!` :
+                        `${actorName} liked your post!`
+                };
+            }
+
+            const actorName = actorDisplayName(notification.actor);
+            return {
+                key: notification.key,
+                action: notification.action,
+                postID: notification.postID,
+                time: notification.time,
+                activity: {
+                    type: 'comment',
+                    postID: notification.postID,
+                    commentID: notification.commentID || notification.key,
+                    body: notification.replyBody,
+                    at: notification.time,
+                    stats,
+                    key: notification.key,
+                    actor: {
+                        username: notification.actor && notification.actor.username,
+                        name: notification.actor && notification.actor.profile && notification.actor.profile.name,
+                        picture: notification.actor && notification.actor.profile && notification.actor.profile.picture
+                    }
+                },
+                summary: formatActivitySummary(stats),
+                message: `${actorName} commented on your post!`
+            };
+        });
+}
+
+function buildScheduledPopupNotifications(notificationFeed, user, currentCondition) {
+    const scheduled = [];
+
+    for (const notification of notificationFeed) {
+        if (!(notification.userPostID >= 0)) continue;
+        if (notification.notificationType !== 'like' && notification.notificationType !== 'reply') continue;
+
+        const userPost = notification.condition ?
+            user.posts.find(post => String(post.condition) === String(notification.condition)) :
+            user.posts.find(post => post.postID == notification.userPostID);
+        if (!userPost || !userPost.absTime) continue;
+
+        const postID = userPost.postID;
+        const scheduledAt = userPost.absTime.getTime() + notification.time;
+        const relatedNotifications = notificationFeed
+            .filter(item => {
+                if (!(item.userPostID >= 0)) return false;
+                if (item.notificationType !== 'like' && item.notificationType !== 'reply') return false;
+                const itemPost = item.condition ?
+                    user.posts.find(post => String(post.condition) === String(item.condition)) :
+                    user.posts.find(post => post.postID == item.userPostID);
+                return itemPost &&
+                    String(itemPost.postID) === String(postID) &&
+                    itemPost.absTime.getTime() + item.time <= scheduledAt;
+            })
+            .map(item => {
+                const itemPost = item.condition ?
+                    user.posts.find(post => String(post.condition) === String(item.condition)) :
+                    user.posts.find(post => post.postID == item.userPostID);
+                return {
+                    key: item.notificationType === 'reply' ?
+                        `actorReply_${currentCondition}_${postID}_${item._id}` :
+                        `${item.notificationType}_${currentCondition}_${postID}_${item._id}`,
+                    action: item.notificationType === 'reply' ? 'reply' : item.notificationType,
+                    postID,
+                    time: itemPost.absTime.getTime() + item.time,
+                    numLikes: item.notificationType === 'like' ? 1 : undefined,
+                    actors: item.notificationType === 'like' ? [item.actor] : undefined,
+                    actor: item.notificationType === 'reply' ? item.actor : undefined,
+                    commentID: item.notificationType === 'reply' ? `scheduled_${item._id}` : undefined,
+                    body: itemPost.body,
+                    picture: itemPost.picture,
+                    replyBody: item.replyBody
+                };
+            });
+
+        const stats = postActivityStats(relatedNotifications, postID, scheduledAt);
+
+        if (notification.notificationType === 'like') {
+            const likeNotifications = relatedNotifications.filter(item => item.action === 'like');
+            const otherCount = Math.max(likeNotifications.length - 1, 0);
+            const actorName = actorDisplayName(notification.actor);
+            const key = `scheduled_like_${currentCondition}_${postID}_${notification._id}`;
+            scheduled.push({
+                key,
+                action: 'like',
+                postID,
+                time: scheduledAt,
+                activity: {
+                    type: 'like',
+                    postID,
+                    count: likeNotifications.length,
+                    stats,
+                    key
+                },
+                summary: formatActivitySummary(stats),
+                message: otherCount > 0 ?
+                    `${actorName} & ${otherCount} others liked your post!` :
+                    `${actorName} liked your post!`
+            });
+        } else {
+            const key = `scheduled_reply_${currentCondition}_${postID}_${notification._id}`;
+            scheduled.push({
+                key,
+                action: 'reply',
+                postID,
+                time: scheduledAt,
+                activity: {
+                    type: 'comment',
+                    postID,
+                    commentID: `scheduled_${notification._id}`,
+                    body: notification.replyBody,
+                    at: scheduledAt,
+                    stats,
+                    key,
+                    actor: {
+                        username: notification.actor && notification.actor.username,
+                        name: notification.actor && notification.actor.profile && notification.actor.profile.name,
+                        picture: notification.actor && notification.actor.profile && notification.actor.profile.picture
+                    }
+                },
+                summary: formatActivitySummary(stats),
+                message: `${actorDisplayName(notification.actor)} commented on your post!`
+            });
+        }
+    }
+
+    return scheduled.sort((a, b) => a.time - b.time);
+}
+
 /**
  * GET /notifications, /getBell
  * Fetch all relevant notifications. 
@@ -232,26 +417,6 @@ exports.getNotifications = async(req, res) => {
             const latestUnreadNotificationTime = unreadNotifications.reduce(function(latest, notification) {
                 return Math.max(latest, notification.time || 0);
             }, 0);
-            const getPostActivityStats = (postID) => {
-                const postNotifications = final_notify.filter(notification => String(notification.postID) === String(postID));
-                const likeCount = postNotifications
-                    .filter(notification => notification.action === 'like')
-                    .reduce((total, notification) => total + (notification.numLikes || 0), 0);
-                const commentCount = postNotifications
-                    .filter(notification => notification.action === 'reply')
-                    .length;
-
-                return {
-                    likeCount,
-                    commentCount,
-                    activityCount: likeCount + commentCount
-                };
-            };
-            const formatActivitySummary = (stats) => {
-                const likeLabel = stats.likeCount === 1 ? 'like' : 'likes';
-                const commentLabel = stats.commentCount === 1 ? 'comment' : 'comments';
-                return `Your post now has ${stats.likeCount} ${likeLabel} and ${stats.commentCount} ${commentLabel}.`;
-            };
             const totalLikeCount = final_notify
                 .filter(notification => notification.action === 'like')
                 .reduce((total, notification) => total + (notification.numLikes || 0), 0);
@@ -259,59 +424,8 @@ exports.getNotifications = async(req, res) => {
                 .filter(notification => notification.action === 'reply')
                 .length;
             const totalActivityCount = totalLikeCount + totalCommentCount;
-            const popupNotifications = final_notify
-                .filter(notification => notification.action === 'like' || notification.action === 'reply')
-                .map(notification => {
-                    const stats = getPostActivityStats(notification.postID);
-                    if (notification.action === 'like') {
-                        const actors = notification.actors || [];
-                        const firstActor = actors[0];
-                        const actorName = firstActor && firstActor.profile ? firstActor.profile.name : 'Someone';
-                        const otherCount = Math.max((notification.numLikes || actors.length || 1) - 1, 0);
-                        const popupKey = `${notification.key}_${notification.time}_${notification.numLikes || actors.length || 1}`;
-                        return {
-                            key: popupKey,
-                            action: notification.action,
-                            postID: notification.postID,
-                            time: notification.time,
-                            activity: {
-                                type: 'like',
-                                postID: notification.postID,
-                                count: notification.numLikes || actors.length || 1,
-                                stats,
-                                key: popupKey
-                            },
-                            summary: formatActivitySummary(stats),
-                            message: otherCount > 0 ?
-                                `${actorName} & ${otherCount} others liked your post!` :
-                                `${actorName} liked your post!`
-                        };
-                    }
-
-                    const actorName = notification.actor && notification.actor.profile ? notification.actor.profile.name : 'Someone';
-                    return {
-                        key: notification.key,
-                        action: notification.action,
-                        postID: notification.postID,
-                        time: notification.time,
-                        activity: {
-                            type: 'comment',
-                            postID: notification.postID,
-                            commentID: notification.commentID || notification.key,
-                            body: notification.replyBody,
-                            at: notification.time,
-                            stats,
-                            key: notification.key,
-                            actor: {
-                                username: notification.actor && notification.actor.username,
-                                name: notification.actor && notification.actor.profile && notification.actor.profile.name,
-                                picture: notification.actor && notification.actor.profile && notification.actor.profile.picture
-                            }
-                        },
-                        summary: formatActivitySummary(stats),
-                        message: `${actorName} commented on your post!`
-                    };
-                });
+            const popupNotifications = buildPopupNotifications(final_notify);
+            const scheduledPopupNotifications = buildScheduledPopupNotifications(notification_feed, user, currentCondition);
             if (req.query.bell) {
                 return res.send({
                     count: totalActivityCount,
@@ -320,7 +434,8 @@ exports.getNotifications = async(req, res) => {
                     activityCount: totalActivityCount,
                     unreadCount: newNotificationCount,
                     latestNotificationTime: latestUnreadNotificationTime,
-                    popupNotifications
+                    popupNotifications,
+                    scheduledPopupNotifications
                 });
             } else {
                 return res.render('notification', {

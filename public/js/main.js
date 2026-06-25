@@ -3,12 +3,12 @@ $('#content').hide();
 $('#loading').show();
 let isActive = false;
 let activeStartTime;
-const notificationPollMs = 15000;
 let latestNotificationCount = 0;
 const currentUserId = $('meta[name="current-user-id"]').attr('content') || 'anonymous';
 const shownNotificationStorageKey = `shownNotificationKeys:${currentUserId}`;
 let notificationPopupQueue = [];
 let notificationPopupVisible = false;
+let scheduledNotificationTimers = {};
 
 function resetActiveTimer(loggingOut) {
     if (isActive) {
@@ -126,13 +126,15 @@ function goToUserPost(postID, key) {
     }
 }
 
-function queueNotificationPopup(notification) {
+function queueNotificationPopup(notification, force) {
     const shown = getShownNotificationKeys();
-    if (!notification || !notification.key || shown[notification.key]) return;
+    if (!notification || !notification.key || (!force && shown[notification.key])) return;
     if (notificationPopupQueue.some(item => item.key === notification.key)) return;
     if ($(`.feed-notification-modal-overlay[data-notification-key='${notification.key}']`).length) return;
 
-    markNotificationShown(notification.key);
+    if (!force) {
+        markNotificationShown(notification.key);
+    }
     notificationPopupQueue.push(notification);
     showNextNotificationPopup();
     updateNotificationBell(latestNotificationCount);
@@ -143,6 +145,10 @@ function showNextNotificationPopup() {
 
     const notification = notificationPopupQueue.shift();
     notificationPopupVisible = true;
+    if (notification.activity && notification.activity.stats) {
+        latestNotificationCount = notification.activity.stats.activityCount;
+        updateNotificationBell(latestNotificationCount);
+    }
 
     const popup = $(`
         <div class="feed-notification-modal-overlay" style="display: none;">
@@ -227,6 +233,45 @@ function applyNotificationActivity(notification) {
     }
 }
 
+function scheduleNotificationPopup(notification) {
+    const shown = getShownNotificationKeys();
+    if (!notification || !notification.key || shown[notification.key]) return;
+    if (scheduledNotificationTimers[notification.key]) return;
+
+    const scheduledTime = Number(notification.time);
+    if (!Number.isFinite(scheduledTime)) return;
+
+    const delay = Math.max(scheduledTime - Date.now(), 0);
+    scheduledNotificationTimers[notification.key] = window.setTimeout(function() {
+        delete scheduledNotificationTimers[notification.key];
+        queueNotificationPopup(notification, false);
+    }, delay);
+}
+
+function updateNotificationState(options) {
+    const settings = options || {};
+    return $.getJSON("/notifications", { bell: true }, function(json) {
+        const shown = getShownNotificationKeys();
+        const popupNotifications = json.popupNotifications || [];
+        const scheduledPopupNotifications = json.scheduledPopupNotifications || [];
+        const notificationsToPopup = settings.forcePopup ?
+            popupNotifications :
+            popupNotifications.filter(notification => !shown[notification.key]);
+        const bellActivityCount = Number(json.activityCount !== undefined ? json.activityCount : json.count) || 0;
+
+        updateNotificationBell(bellActivityCount);
+        scheduledPopupNotifications.forEach(scheduleNotificationPopup);
+
+        if (window.location.pathname !== '/notifications') {
+            notificationsToPopup.forEach(notification => queueNotificationPopup(notification, settings.forcePopup));
+        }
+
+        if (settings.fallbackToNotifications && popupNotifications.length === 0) {
+            window.location.href = '/notifications';
+        }
+    });
+}
+
 $(window).on("load", function() {
     /**
      * Recording user's active time on website:
@@ -274,21 +319,11 @@ $(window).on("load", function() {
     // Check if user has any notifications.
     if (window.location.pathname !== '/login' && window.location.pathname !== '/signup' && window.location.pathname !== '/forgot') {
         logPageEvent(window.hiloPageLogPath || window.location.pathname);
-        const pollNotifications = function() {
-            $.getJSON("/notifications", { bell: true }, function(json) {
-                const shown = getShownNotificationKeys();
-                const popupNotifications = json.popupNotifications || [];
-                const newPopupNotifications = popupNotifications.filter(notification => !shown[notification.key]);
-                const bellActivityCount = Number(json.activityCount !== undefined ? json.activityCount : json.count) || 0;
-
-                updateNotificationBell(bellActivityCount);
-                if (window.location.pathname !== '/notifications') {
-                    newPopupNotifications.forEach(queueNotificationPopup);
-                }
-            });
-        };
-        pollNotifications();
-        setInterval(pollNotifications, notificationPollMs);
+        $("a.item[href='/notifications']").on('click', function(event) {
+            event.preventDefault();
+            updateNotificationState({ forcePopup: true, fallbackToNotifications: true });
+        });
+        updateNotificationState();
     };
 
     // Picture Preview on Image Selection (Used for: uploading new post, updating profile)
