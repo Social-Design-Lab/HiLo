@@ -5,6 +5,25 @@ const helpers = require('./helpers');
 const _ = require('lodash');
 const { getConditionForSession, getCurrentSession } = require('../lib/conditionOrder');
 
+const HIGH_SUPPORT_LIKE_BATCHES = {
+    1: [
+        { time: 15000, count: 1 },
+        { time: 45000, count: 5 },
+        { time: 75000, count: 3 },
+        { time: 105000, count: 1 },
+        { time: 135000, count: 3 },
+        { time: 165000, count: 1 }
+    ],
+    3: [
+        { time: 15000, count: 2 },
+        { time: 45000, count: 1 },
+        { time: 75000, count: 4 },
+        { time: 105000, count: 3 },
+        { time: 135000, count: 2 },
+        { time: 165000, count: 1 }
+    ]
+};
+
 function actorDisplayName(actor) {
     return actor && actor.profile ? actor.profile.name : 'Someone';
 }
@@ -59,7 +78,7 @@ function buildPopupNotifications(finalNotify) {
                     },
                     summary: formatActivitySummary(stats),
                     message: otherCount > 0 ?
-                        `${actorName} & ${otherCount} others liked your post!` :
+                        `${actorName} & ${otherCount} ${otherCount === 1 ? 'other' : 'others'} liked your post!` :
                         `${actorName} liked your post!`
                 };
             }
@@ -91,100 +110,151 @@ function buildPopupNotifications(finalNotify) {
 }
 
 function buildScheduledPopupNotifications(notificationFeed, user, currentCondition) {
+    const events = notificationFeed
+        .filter(notification => notification.userPostID >= 0)
+        .filter(notification => notification.notificationType === 'like' || notification.notificationType === 'reply')
+        .map(notification => {
+            const userPost = notification.condition ?
+                user.posts.find(post => String(post.condition) === String(notification.condition)) :
+                user.posts.find(post => post.postID == notification.userPostID);
+            if (!userPost || !userPost.absTime) return null;
+
+            const postID = userPost.postID;
+            const scheduledAt = userPost.absTime.getTime() + notification.time;
+
+            return {
+                notification,
+                action: notification.notificationType === 'reply' ? 'reply' : notification.notificationType,
+                postID,
+                condition: Number(notification.condition || userPost.condition),
+                postStart: userPost.absTime.getTime(),
+                relativeTime: notification.time,
+                time: scheduledAt,
+                actor: notification.actor,
+                body: userPost.body,
+                picture: userPost.picture,
+                replyBody: notification.replyBody
+            };
+        })
+        .filter(Boolean);
+
     const scheduled = [];
+    const likesByPost = new Map();
 
-    for (const notification of notificationFeed) {
-        if (!(notification.userPostID >= 0)) continue;
-        if (notification.notificationType !== 'like' && notification.notificationType !== 'reply') continue;
+    for (const event of events) {
+        if (event.action !== 'like') continue;
+        const key = `${event.condition}_${event.postID}`;
+        if (!likesByPost.has(key)) {
+            likesByPost.set(key, []);
+        }
+        likesByPost.get(key).push(event);
+    }
 
-        const userPost = notification.condition ?
-            user.posts.find(post => String(post.condition) === String(notification.condition)) :
-            user.posts.find(post => post.postID == notification.userPostID);
-        if (!userPost || !userPost.absTime) continue;
+    for (const likeEvents of likesByPost.values()) {
+        likeEvents.sort((a, b) => a.relativeTime - b.relativeTime);
+        const firstLike = likeEvents[0];
+        const template = HIGH_SUPPORT_LIKE_BATCHES[firstLike.condition];
+        const groups = [];
 
-        const postID = userPost.postID;
-        const scheduledAt = userPost.absTime.getTime() + notification.time;
-        const relatedNotifications = notificationFeed
-            .filter(item => {
-                if (!(item.userPostID >= 0)) return false;
-                if (item.notificationType !== 'like' && item.notificationType !== 'reply') return false;
-                const itemPost = item.condition ?
-                    user.posts.find(post => String(post.condition) === String(item.condition)) :
-                    user.posts.find(post => post.postID == item.userPostID);
-                return itemPost &&
-                    String(itemPost.postID) === String(postID) &&
-                    itemPost.absTime.getTime() + item.time <= scheduledAt;
-            })
-            .map(item => {
-                const itemPost = item.condition ?
-                    user.posts.find(post => String(post.condition) === String(item.condition)) :
-                    user.posts.find(post => post.postID == item.userPostID);
-                return {
-                    key: item.notificationType === 'reply' ?
-                        `actorReply_${currentCondition}_${postID}_${item._id}` :
-                        `${item.notificationType}_${currentCondition}_${postID}_${item._id}`,
-                    action: item.notificationType === 'reply' ? 'reply' : item.notificationType,
-                    postID,
-                    time: itemPost.absTime.getTime() + item.time,
-                    numLikes: item.notificationType === 'like' ? 1 : undefined,
-                    actors: item.notificationType === 'like' ? [item.actor] : undefined,
-                    actor: item.notificationType === 'reply' ? item.actor : undefined,
-                    commentID: item.notificationType === 'reply' ? `scheduled_${item._id}` : undefined,
-                    body: itemPost.body,
-                    picture: itemPost.picture,
-                    replyBody: item.replyBody
-                };
+        if (template) {
+            let cursor = 0;
+            for (const batch of template) {
+                const batchLikes = likeEvents.slice(cursor, cursor + batch.count);
+                if (batchLikes.length > 0) {
+                    groups.push({
+                        likes: batchLikes,
+                        time: firstLike.postStart + batch.time
+                    });
+                }
+                cursor += batch.count;
+            }
+        } else {
+            for (const likeEvent of likeEvents) {
+                groups.push({
+                    likes: [likeEvent],
+                    time: likeEvent.time
+                });
+            }
+        }
+
+        let cumulativeLikes = 0;
+        for (const group of groups) {
+            cumulativeLikes += group.likes.length;
+            const groupFirstLike = group.likes[0];
+            const repliesThroughTime = events.filter(event => {
+                return event.action === 'reply' &&
+                    String(event.postID) === String(groupFirstLike.postID) &&
+                    event.time <= group.time;
             });
+            const stats = {
+                likeCount: cumulativeLikes,
+                commentCount: repliesThroughTime.length,
+                activityCount: cumulativeLikes + repliesThroughTime.length
+            };
+            const otherCount = group.likes.length - 1;
+            const actorName = actorDisplayName(groupFirstLike.actor);
+            const key = `scheduled_like_${currentCondition}_${groupFirstLike.postID}_${group.time}_${group.likes.length}`;
 
-        const stats = postActivityStats(relatedNotifications, postID, scheduledAt);
-
-        if (notification.notificationType === 'like') {
-            const likeNotifications = relatedNotifications.filter(item => item.action === 'like');
-            const otherCount = Math.max(likeNotifications.length - 1, 0);
-            const actorName = actorDisplayName(notification.actor);
-            const key = `scheduled_like_${currentCondition}_${postID}_${notification._id}`;
             scheduled.push({
                 key,
                 action: 'like',
-                postID,
-                time: scheduledAt,
+                postID: groupFirstLike.postID,
+                time: group.time,
                 activity: {
                     type: 'like',
-                    postID,
-                    count: likeNotifications.length,
+                    postID: groupFirstLike.postID,
+                    count: cumulativeLikes,
                     stats,
                     key
                 },
                 summary: formatActivitySummary(stats),
                 message: otherCount > 0 ?
-                    `${actorName} & ${otherCount} others liked your post!` :
+                    `${actorName} & ${otherCount} ${otherCount === 1 ? 'other' : 'others'} liked your post!` :
                     `${actorName} liked your post!`
             });
-        } else {
-            const key = `scheduled_reply_${currentCondition}_${postID}_${notification._id}`;
-            scheduled.push({
-                key,
-                action: 'reply',
-                postID,
-                time: scheduledAt,
-                activity: {
-                    type: 'comment',
-                    postID,
-                    commentID: `scheduled_${notification._id}`,
-                    body: notification.replyBody,
-                    at: scheduledAt,
-                    stats,
-                    key,
-                    actor: {
-                        username: notification.actor && notification.actor.username,
-                        name: notification.actor && notification.actor.profile && notification.actor.profile.name,
-                        picture: notification.actor && notification.actor.profile && notification.actor.profile.picture
-                    }
-                },
-                summary: formatActivitySummary(stats),
-                message: `${actorDisplayName(notification.actor)} commented on your post!`
-            });
         }
+    }
+
+    for (const replyEvent of events.filter(event => event.action === 'reply')) {
+        const likesThroughTime = events.filter(event => {
+            return event.action === 'like' &&
+                String(event.postID) === String(replyEvent.postID) &&
+                event.time <= replyEvent.time;
+        });
+        const repliesThroughTime = events.filter(event => {
+            return event.action === 'reply' &&
+                String(event.postID) === String(replyEvent.postID) &&
+                event.time <= replyEvent.time;
+        });
+        const stats = {
+            likeCount: likesThroughTime.length,
+            commentCount: repliesThroughTime.length,
+            activityCount: likesThroughTime.length + repliesThroughTime.length
+        };
+        const key = `scheduled_reply_${currentCondition}_${replyEvent.postID}_${replyEvent.notification._id}`;
+
+        scheduled.push({
+            key,
+            action: 'reply',
+            postID: replyEvent.postID,
+            time: replyEvent.time,
+            activity: {
+                type: 'comment',
+                postID: replyEvent.postID,
+                commentID: `scheduled_${replyEvent.notification._id}`,
+                body: replyEvent.replyBody,
+                at: replyEvent.time,
+                stats,
+                key,
+                actor: {
+                    username: replyEvent.actor && replyEvent.actor.username,
+                    name: replyEvent.actor && replyEvent.actor.profile && replyEvent.actor.profile.name,
+                    picture: replyEvent.actor && replyEvent.actor.profile && replyEvent.actor.profile.picture
+                }
+            },
+            summary: formatActivitySummary(stats),
+            message: `${actorDisplayName(replyEvent.actor)} commented on your post!`
+        });
     }
 
     return scheduled.sort((a, b) => a.time - b.time);

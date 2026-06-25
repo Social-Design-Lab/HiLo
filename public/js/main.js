@@ -241,7 +241,9 @@ function scheduleNotificationPopup(notification) {
     const scheduledTime = Number(notification.time);
     if (!Number.isFinite(scheduledTime)) return;
 
-    const delay = Math.max(scheduledTime - Date.now(), 0);
+    const delay = scheduledTime - Date.now();
+    if (delay <= 0) return;
+
     scheduledNotificationTimers[notification.key] = window.setTimeout(function() {
         delete scheduledNotificationTimers[notification.key];
         queueNotificationPopup(notification, false);
@@ -251,12 +253,11 @@ function scheduleNotificationPopup(notification) {
 function updateNotificationState(options) {
     const settings = options || {};
     return $.getJSON("/notifications", { bell: true }, function(json) {
-        const shown = getShownNotificationKeys();
         const popupNotifications = json.popupNotifications || [];
         const scheduledPopupNotifications = json.scheduledPopupNotifications || [];
         const notificationsToPopup = settings.forcePopup ?
             popupNotifications :
-            popupNotifications.filter(notification => !shown[notification.key]);
+            [];
         const bellActivityCount = Number(json.activityCount !== undefined ? json.activityCount : json.count) || 0;
 
         updateNotificationBell(bellActivityCount);
