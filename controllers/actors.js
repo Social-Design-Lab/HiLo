@@ -5,6 +5,7 @@ const helpers = require('./helpers');
 const _ = require('lodash');
 const dotenv = require('dotenv');
 const { getConditionForSession, getCurrentSession } = require('../lib/conditionOrder');
+const { applyTimeForRender, getDisplaySortTime } = require('../lib/displayTime');
 dotenv.config({ path: '.env' }); // See the file .env.example for the structure of .env
 
 /**
@@ -26,30 +27,17 @@ exports.getActors = async(req, res) => {
 };
 
 function applyActorPostDisplayTimes(posts, user) {
-    const baseTime = new Date(user.createdAt).getTime();
-    const now = Date.now();
-
     for (const post of posts) {
-        if (!post.display_time) {
-            const offset = Number(post.time) || 0;
-            post.display_time = baseTime + offset;
-        } else {
-            post.display_time = now - (Number(post.display_time) * 24 * 60 * 60 * 1000);
-        }
+        applyTimeForRender(post, user);
 
         if (Array.isArray(post.comments)) {
             post.comments.forEach((comment) => {
-                if (!comment.display_time) {
-                    const offset = Number(comment.time) || 0;
-                    comment.display_time = baseTime + offset;
-                } else {
-                    const commentDisplayTime = now - (Number(comment.display_time) * 24 * 60 * 60 * 1000);
-                    comment.display_time = commentDisplayTime;
-                    comment.time = commentDisplayTime - baseTime;
-                }
+                applyTimeForRender(comment, user);
             });
         }
     }
+
+    posts.sort((a, b) => getDisplaySortTime(b, user) - getDisplaySortTime(a, user));
 }
 
 /**

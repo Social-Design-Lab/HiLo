@@ -1,7 +1,6 @@
 .ui.fluid.card(postCondition=val.condition, postID=val.id, type='actor', actor_un = val.actor.username, actor_name = val.actor.profile.name, actor_pic = val.actor.profile.picture)
   .content
-    //- for display_time 
-    .right.floated.time.meta= val.display_time || val.time
+    .right.floated.time.meta= val.time
 
     a(href='/user/'+val.actor.username)     
       img.ui.avatar.image(src="/profile_pictures/"+val.actor.profile.picture)
@@ -69,8 +68,7 @@
               .content(class=comment.flagged ? "transition hidden" : "")
                 a.author(href='/user/'+comment.actor.username)=comment.actor.profile.name
                 .metadata
-                  //- uses dispaly_time for script generated comments
-                  span.date= (user.createdAt.getTime() + comment.time) 
+                  span.date= comment.time
                   //- .rating
                   //-   i.heart.icon(class=comment.liked ? "red" : null)
                   //-   span.num=comment.likes+(comment.liked ? 1 : 0)

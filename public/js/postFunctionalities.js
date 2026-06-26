@@ -361,14 +361,21 @@ function initPostFunctionalities() {
         type: 'image'
     });
 
-    // add humanized time to all posts, including display_time strings
+    // Add humanized time to numeric timestamps; ignore invalid time labels.
     $('.right.floated.time.meta, .date').each(function() {
         const raw = $(this).text().trim();
         let time;
 
+        if (!raw) return;
+
+        if (raw.toLowerCase() === 'nan') {
+            $(this).text('');
+            return;
+        }
+
         if (!isNaN(Number(raw))) {
             time = new Date(Number(raw));
-        } else if (!isNaN(Date.parse(raw))) {
+        } else if (!/[A-Za-z]/.test(raw) && !isNaN(Date.parse(raw))) {
             time = new Date(raw);
         }
 

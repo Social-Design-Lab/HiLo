@@ -1,4 +1,5 @@
 const _ = require('lodash');
+const { getDisplaySortTime } = require('../lib/displayTime');
 
 // From https://stackoverflow.com/questions/2450954/how-to-randomize-shuffle-a-javascript-array
 // Function shuffles the content of an array and returns the shuffled array.
@@ -19,39 +20,7 @@ function shuffle(array) {
 }
 
 function getPostSortTime(post, user) {
-    if (!post) return 0;
-
-    if (post.absTime) {
-        const absTime = new Date(post.absTime).getTime();
-        if (!Number.isNaN(absTime)) return absTime;
-    }
-
-    if (post.display_time !== undefined && post.display_time !== null && post.display_time !== '') {
-        const displayTime = Number(post.display_time);
-        if (Number.isFinite(displayTime)) {
-            if (displayTime > 100000000000) return displayTime;
-            return Date.now() - (displayTime * 24 * 60 * 60 * 1000);
-        }
-
-        const parsedDisplayTime = new Date(post.display_time).getTime();
-        if (!Number.isNaN(parsedDisplayTime)) return parsedDisplayTime;
-    }
-
-    if (post.time !== undefined && post.time !== null && user && user.createdAt) {
-        const relativeTime = Number(post.time);
-        if (Number.isFinite(relativeTime)) {
-            return new Date(user.createdAt).getTime() + relativeTime;
-        }
-    }
-
-    if (post.relativeTime !== undefined && post.relativeTime !== null && user && user.createdAt) {
-        const relativeTime = Number(post.relativeTime);
-        if (Number.isFinite(relativeTime)) {
-            return new Date(user.createdAt).getTime() + relativeTime;
-        }
-    }
-
-    return 0;
+    return getDisplaySortTime(post, user);
 }
 
 /**

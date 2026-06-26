@@ -5,6 +5,7 @@ const helpers = require('./helpers');
 const _ = require('lodash');
 const dotenv = require('dotenv');
 const { getConditionForSession, getCurrentSession } = require('../lib/conditionOrder');
+const { applyTimeForRender, getDisplaySortTime } = require('../lib/displayTime');
 dotenv.config({ path: '.env' }); // See the file .env.example for the structure of .env
 
 let script_feed = [];
@@ -217,10 +218,7 @@ exports.getScript = async (req, res, next) => {
     if (condState.state === "active") {
       script_feed = await Script.find({
         condition: String(currentCondition),
-        $or: [
-          { display_time: { $ne: null } },
-          { time: { $lte: time_diff, $gte: 0 } }
-        ],
+        time: { $lte: time_diff, $gte: 0 },
       })
       .sort({ time: -1 })
       .populate({
@@ -235,34 +233,17 @@ exports.getScript = async (req, res, next) => {
       })
       .exec();
 
-      // compute display_time only when active
+      // Convert relative script time to an absolute timestamp for display.
       for (const post of script_feed) {
-        const now = Date.now();
-
-        if (!post.display_time) {
-          const offset = Number(post.time) || 0;
-          post.display_time = baseTime + offset;
-        } else {
-          const max = Number(post.display_time) * 24 * 60 * 60 * 1000;
-          // const offset = Math.random() * max;
-          post.display_time = now - max;
-        }
+        applyTimeForRender(post, user);
 
         if (Array.isArray(post.comments)) {
           post.comments.forEach((c) => {
-            if (!c.display_time) {
-              const offset = Number(c.time) || 0;
-              c.display_time = baseTime + offset;
-            }
-            // else{
-            //   const max = Number(post.display_time) * 24 * 60*60*1000;
-            //   const offset = Math.random() * max;
-            //   c.display_time = now - offset;
-            // }
+            applyTimeForRender(c, user);
           });
         }
       }
-      script_feed.sort((a, b) => b.display_time - a.display_time)
+      script_feed.sort((a, b) => getDisplaySortTime(b, user) - getDisplaySortTime(a, user))
     }
 
 
@@ -345,8 +326,20 @@ exports.newPost = async(req, res, next) => {
 
         if (req.file && body) {
             user.numPosts = user.numPosts + 1; // Count begins at 0
-            const currDate = Date.now();
             const currentConditionString = String(currentCondition);
+
+            // Find any Actor replies (comments) that go along with this post before
+            // stamping the post/session start time, so notification timers start
+            // when the participant actually enters the session.
+            const actor_replies = await Notification.find({
+                    condition: { "$in": ["", currentConditionString] }
+                })
+                .where('notificationType').equals('reply')
+                .populate('actor')
+                .sort('time')
+                .exec();
+
+            const currDate = Date.now();
 
             let post = {
                 type: "user_post",
@@ -361,15 +354,6 @@ exports.newPost = async(req, res, next) => {
                 absTime: currDate,
                 relativeTime: currDate - user.createdAt,
             };
-
-            // Find any Actor replies (comments) that go along with this post
-            const actor_replies = await Notification.find({
-                    condition: { "$in": ["", currentConditionString] }
-                })
-                .where('notificationType').equals('reply')
-                .populate('actor')
-                .sort('time')
-                .exec();
 
             // If there are Actor replies (comments) that go along with this post, add them to the user's post.
             if (actor_replies.length > 0) {
@@ -391,7 +375,7 @@ exports.newPost = async(req, res, next) => {
             }
 
             user.posts.unshift(post); // Add most recent user-made post to the beginning of the array
-            user.conditionStart = Date.now();
+            user.conditionStart = currDate;
             await user.save();
             res.redirect('/');
         } else {

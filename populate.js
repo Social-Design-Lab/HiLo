@@ -185,8 +185,6 @@ async function doPopulate() {
                                 likes: new_post.likes || getLikes(),
                                 actor: act,
                                 time: timeStringToNum(new_post.time),
-                                // display_time: getRandomPastDate(),
-                                display_time: new_post.display_time || null, // <-- NEW FIELD ADDED BY VICKY
                                 class: new_post.class,
                                 condition: new_post.condition
                             }
@@ -250,7 +248,6 @@ async function doPopulate() {
                                     likes: new_reply.likes || getLikesComment(),
                                     actor: act,
                                     time: replyTime,
-                                    display_time: new_reply.display_time || null, // <-- NEW FIELD ADDED BY VICKY
                                     class: new_reply.class,
                                     condition: new_reply.condition
                                 };
