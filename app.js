@@ -199,6 +199,7 @@ app.use('/profile_pictures', express.static(path.join(__dirname, 'profile_pictur
 app.get('/', passportConfig.isAuthenticated, scriptController.getScript);
 
 app.post('/post/new', userpostupload.single('picinput'), scriptController.newPost);
+app.post('/session/start', passportConfig.isAuthenticated, scriptController.startSession);
 app.post('/pageLog', passportConfig.isAuthenticated, userController.postPageLog);
 app.post('/pageTimes', passportConfig.isAuthenticated, userController.postPageTime);
 

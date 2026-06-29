@@ -48,6 +48,8 @@ function renderEndExperiment(res, user) {
 }
 
 async function applyScheduledUserPostLikes(user) {
+  if (!user.conditionStart) return;
+
   for (const post of user.posts) {
     const condition = String(post.condition || "");
     if (!condition || !post.absTime) continue;
@@ -65,6 +67,8 @@ async function applyScheduledUserPostLikes(user) {
 }
 
 async function ensureScheduledUserPostReplies(user) {
+  if (!user.conditionStart) return false;
+
   let addedReply = false;
 
   for (const post of user.posts) {
@@ -189,7 +193,10 @@ exports.getScript = async (req, res, next) => {
       return renderMakePostGate(res, user);
     }
 
-    const condState = await getConditionState(user, 180000, 4); // 15000 for testing, 180000 for real
+    const pendingSessionStart = !user.conditionStart;
+    const condState = pendingSessionStart ?
+      { state: "active", condition: user.condition } :
+      await getConditionState(user, 180000, 4); // 15000 for testing, 180000 for real
     console.log("Condition window →", condState);
 
     // END OF EXPERIMENT — after condition 4 finishes
@@ -216,9 +223,13 @@ exports.getScript = async (req, res, next) => {
     }
 
     if (condState.state === "active") {
+      const sessionStartTime = user.conditionStart ? new Date(user.conditionStart).getTime() : Date.now();
+      const sessionElapsed = pendingSessionStart ? 0 : Date.now() - sessionStartTime;
+      const renderTimingUser = { createdAt: new Date(sessionStartTime) };
+
       script_feed = await Script.find({
         condition: String(currentCondition),
-        time: { $lte: time_diff, $gte: 0 },
+        time: { $lte: sessionElapsed, $gte: 0 },
       })
       .sort({ time: -1 })
       .populate({
@@ -235,15 +246,15 @@ exports.getScript = async (req, res, next) => {
 
       // Convert relative script time to an absolute timestamp for display.
       for (const post of script_feed) {
-        applyTimeForRender(post, user);
+        applyTimeForRender(post, renderTimingUser);
 
         if (Array.isArray(post.comments)) {
           post.comments.forEach((c) => {
-            applyTimeForRender(c, user);
+            applyTimeForRender(c, renderTimingUser);
           });
         }
       }
-      script_feed.sort((a, b) => getDisplaySortTime(b, user) - getDisplaySortTime(a, user))
+      script_feed.sort((a, b) => getDisplaySortTime(b, renderTimingUser) - getDisplaySortTime(a, renderTimingUser))
     }
 
 
@@ -252,6 +263,23 @@ exports.getScript = async (req, res, next) => {
     // Use plain objects for display so filtering future comments does not delete
     // scheduled actor comments from the user's saved post document.
     let user_posts = currentConditionPosts.slice(0, 1).map(post => post.toObject ? post.toObject() : post);
+    if (pendingSessionStart && user_posts.length > 0) {
+      const renderStart = new Date();
+      const oldAbsTime = new Date(user_posts[0].absTime).getTime();
+      const oldRelativeTime = Number(user_posts[0].relativeTime) || 0;
+      user_posts[0].absTime = renderStart;
+      user_posts[0].relativeTime = renderStart.getTime() - user.createdAt.getTime();
+      user_posts[0].comments = (user_posts[0].comments || []).map(comment => {
+        const clonedComment = Object.assign({}, comment);
+        const oldCommentAbsTime = new Date(comment.absTime).getTime();
+        const commentOffset = Number.isFinite(oldCommentAbsTime) && Number.isFinite(oldAbsTime) ?
+          oldCommentAbsTime - oldAbsTime :
+          ((Number(comment.relativeTime) || oldRelativeTime) - oldRelativeTime);
+        clonedComment.absTime = new Date(renderStart.getTime() + Math.max(commentOffset, 0));
+        clonedComment.relativeTime = user_posts[0].relativeTime + Math.max(commentOffset, 0);
+        return clonedComment;
+      });
+    }
 
     const finalfeed = helpers.getFeed(
       user_posts,
@@ -270,6 +298,7 @@ exports.getScript = async (req, res, next) => {
       script: finalfeed,
       showNewPostIcon: false,
       conditionStartTime: user.conditionStart,
+      pendingSessionStart,
     });
   } catch (err) {
     next(err);
@@ -326,19 +355,6 @@ exports.newPost = async(req, res, next) => {
 
         if (req.file && body) {
             user.numPosts = user.numPosts + 1; // Count begins at 0
-            const currentConditionString = String(currentCondition);
-
-            // Find any Actor replies (comments) that go along with this post before
-            // stamping the post/session start time, so notification timers start
-            // when the participant actually enters the session.
-            const actor_replies = await Notification.find({
-                    condition: { "$in": ["", currentConditionString] }
-                })
-                .where('notificationType').equals('reply')
-                .populate('actor')
-                .sort('time')
-                .exec();
-
             const currDate = Date.now();
 
             let post = {
@@ -355,33 +371,64 @@ exports.newPost = async(req, res, next) => {
                 relativeTime: currDate - user.createdAt,
             };
 
-            // If there are Actor replies (comments) that go along with this post, add them to the user's post.
-            if (actor_replies.length > 0) {
-                for (const reply of actor_replies) {
-                    user.numActorReplies = user.numActorReplies + 1; // Count begins at 0
-                    const tmp_actor_reply = {
-                        actor: reply.actor._id,
-                        body: reply.replyBody,
-                        commentID: user.numActorReplies,
-                        relativeTime: post.relativeTime + reply.time,
-                        absTime: new Date(user.createdAt.getTime() + post.relativeTime + reply.time),
-                        new_comment: false,
-                        liked: false,
-                        flagged: false,
-                        likes: 0
-                    };
-                    post.comments.push(tmp_actor_reply);
-                }
-            }
-
             user.posts.unshift(post); // Add most recent user-made post to the beginning of the array
-            user.conditionStart = currDate;
+            user.conditionStart = null;
             await user.save();
             res.redirect('/');
         } else {
             req.flash('errors', { msg: 'ERROR: Your post did not get sent. Please include a photo and a caption.' });
             res.redirect('/');
         }
+    } catch (err) {
+        next(err);
+    }
+};
+
+exports.startSession = async(req, res, next) => {
+    try {
+        const user = await User.findById(req.user.id).exec();
+        const currentSession = getCurrentSession(user);
+        const currentCondition = getConditionForSession(user, currentSession);
+
+        if (currentSession > 4) {
+            return res.status(400).send({ error: 'Study is already over.' });
+        }
+
+        const currentConditionPosts = user.posts
+            .filter(post => String(post.condition) === String(currentCondition))
+            .sort((a, b) => new Date(b.absTime).getTime() - new Date(a.absTime).getTime());
+
+        if (currentConditionPosts.length === 0) {
+            return res.status(400).send({ error: 'No post for the current session.' });
+        }
+
+        if (!user.conditionStart) {
+            const startTime = new Date();
+            const post = currentConditionPosts[0];
+            const oldAbsTime = new Date(post.absTime).getTime();
+            const oldRelativeTime = Number(post.relativeTime) || 0;
+
+            user.conditionStart = startTime;
+            post.absTime = startTime;
+            post.relativeTime = startTime.getTime() - user.createdAt.getTime();
+
+            for (const comment of post.comments || []) {
+                const oldCommentAbsTime = new Date(comment.absTime).getTime();
+                const commentOffset = Number.isFinite(oldCommentAbsTime) && Number.isFinite(oldAbsTime) ?
+                    oldCommentAbsTime - oldAbsTime :
+                    ((Number(comment.relativeTime) || oldRelativeTime) - oldRelativeTime);
+                const safeOffset = Math.max(commentOffset, 0);
+                comment.absTime = new Date(startTime.getTime() + safeOffset);
+                comment.relativeTime = post.relativeTime + safeOffset;
+            }
+
+            user.markModified('posts');
+            await user.save();
+        }
+
+        return res.send({
+            conditionStartTime: new Date(user.conditionStart).getTime()
+        });
     } catch (err) {
         next(err);
     }

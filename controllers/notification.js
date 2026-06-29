@@ -53,6 +53,21 @@ function formatActivitySummary(stats) {
     return `Your post now has ${stats.likeCount} ${likeLabel} and ${stats.commentCount} ${commentLabel}.`;
 }
 
+function addActorByRecency(notificationGroup, actor, eventTime, notificationType) {
+    if (!actor) return;
+
+    if (notificationType === "read" && actor.username === "generic-joe") {
+        notificationGroup.actors.push(actor);
+        return;
+    }
+
+    if (eventTime >= notificationGroup.time) {
+        notificationGroup.actors.unshift(actor);
+    } else {
+        notificationGroup.actors.push(actor);
+    }
+}
+
 function buildPopupNotifications(finalNotify) {
     return finalNotify
         .filter(notification => notification.action === 'like' || notification.action === 'reply')
@@ -181,6 +196,7 @@ function buildScheduledPopupNotifications(notificationFeed, user, currentConditi
         for (const group of groups) {
             cumulativeLikes += group.likes.length;
             const groupFirstLike = group.likes[0];
+            const groupLatestLike = group.likes[group.likes.length - 1];
             const repliesThroughTime = events.filter(event => {
                 return event.action === 'reply' &&
                     String(event.postID) === String(groupFirstLike.postID) &&
@@ -192,7 +208,7 @@ function buildScheduledPopupNotifications(notificationFeed, user, currentConditi
                 activityCount: cumulativeLikes + repliesThroughTime.length
             };
             const otherCount = group.likes.length - 1;
-            const actorName = actorDisplayName(groupFirstLike.actor);
+            const actorName = actorDisplayName(groupLatestLike.actor);
             const key = `scheduled_like_${currentCondition}_${groupFirstLike.postID}_${group.time}_${group.likes.length}`;
 
             scheduled.push({
@@ -280,6 +296,29 @@ exports.getNotifications = async(req, res) => {
             const currDate = Date.now();
             const lastNotifyVisit = user.lastNotifyVisit; //Absolute Date
             const currentCondition = String(getConditionForSession(user, getCurrentSession(user)) || "");
+            const currentConditionPostExists = user.posts.some(post => String(post.condition) === currentCondition);
+
+            if (!user.conditionStart && currentConditionPostExists) {
+                if (req.query.bell) {
+                    return res.send({
+                        count: 0,
+                        likeCount: 0,
+                        commentCount: 0,
+                        activityCount: 0,
+                        unreadCount: 0,
+                        latestNotificationTime: 0,
+                        popupNotifications: [],
+                        scheduledPopupNotifications: []
+                    });
+                }
+
+                return res.render('notification', {
+                    notification_feed: [],
+                    script: [],
+                    count: 0
+                });
+            }
+
             const notification_feed = await Notification.find({
                     $or: [
                         { userPostID: { $exists: true } },
@@ -359,16 +398,13 @@ exports.getNotifications = async(req, res) => {
                                 }
                                 //Update notification actor profile
                                 //if generic-joe, append. else, shift to the front of the line.
-                                if (notification.notificationType == "read" && notification.actor.username == "generic-joe") {
-                                    final_notify[notifyIndex].actors.push(notification.actor);
-                                } else {
-                                    final_notify[notifyIndex].actors.unshift(notification.actor);
-                                }
+                                const notificationAbsTime = userPost.absTime.getTime() + notification.time;
+                                addActorByRecency(final_notify[notifyIndex], notification.actor, notificationAbsTime, notification.notificationType);
                                 //Update notification time and read/unread classification
-                                if ((userPost.absTime.getTime() + notification.time) > final_notify[notifyIndex].time) {
-                                    final_notify[notifyIndex].time = userPost.absTime.getTime() + notification.time;
+                                if (notificationAbsTime > final_notify[notifyIndex].time) {
+                                    final_notify[notifyIndex].time = notificationAbsTime;
                                 }
-                                if ((userPost.absTime.getTime() + notification.time) > lastNotifyVisit) {
+                                if (notificationAbsTime > lastNotifyVisit) {
                                     final_notify[notifyIndex].unreadNotification = true;
                                 }
                             }
@@ -431,16 +467,13 @@ exports.getNotifications = async(req, res) => {
                             }
                             //Update notification actor profile
                             //if generic-joe, append. else, shift to the front of the line.
-                            if (notification.notificationType == "read" && notification.actor.username == "generic-joe") {
-                                final_notify[notifyIndex].actors.push(notification.actor);
-                            } else {
-                                final_notify[notifyIndex].actors.unshift(notification.actor);
-                            }
+                            const notificationAbsTime = time + notification.time;
+                            addActorByRecency(final_notify[notifyIndex], notification.actor, notificationAbsTime, notification.notificationType);
                             //Update notification time and read/unread classification
-                            if (time + notification.time > final_notify[notifyIndex].time) {
-                                final_notify[notifyIndex].time = time + notification.time;
+                            if (notificationAbsTime > final_notify[notifyIndex].time) {
+                                final_notify[notifyIndex].time = notificationAbsTime;
                             }
-                            if (time + notification.time > lastNotifyVisit) {
+                            if (notificationAbsTime > lastNotifyVisit) {
                                 final_notify[notifyIndex].unreadNotification = true;
                             }
                         }

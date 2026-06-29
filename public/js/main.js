@@ -250,6 +250,21 @@ function scheduleNotificationPopup(notification) {
     }, delay);
 }
 
+function startPendingSessionIfNeeded() {
+    if (!window.hiloPendingSessionStart) {
+        return $.Deferred().resolve().promise();
+    }
+
+    return $.post("/session/start", {
+        _csrf: $('meta[name="csrf-token"]').attr('content')
+    }).done(function(json) {
+        window.hiloPendingSessionStart = false;
+        if (json && json.conditionStartTime && typeof window.handleSessionStart === 'function') {
+            window.handleSessionStart(Number(json.conditionStartTime));
+        }
+    });
+}
+
 function updateNotificationState(options) {
     const settings = options || {};
     return $.getJSON("/notifications", { bell: true }, function(json) {
@@ -308,7 +323,13 @@ $(window).on("load", function() {
      */
     // Close loading dimmer on content load.
     $('#loading').hide();
-    $('#content').fadeIn('slow');
+    $('#content').fadeIn('slow', function() {
+        if (window.location.pathname !== '/login' && window.location.pathname !== '/signup' && window.location.pathname !== '/forgot') {
+            startPendingSessionIfNeeded().always(function() {
+                updateNotificationState();
+            });
+        }
+    });
 
     // Fomantic UI: Enable closing messages
     $('.message .close').on('click', function() {
@@ -324,7 +345,6 @@ $(window).on("load", function() {
             event.preventDefault();
             updateNotificationState({ forcePopup: true, fallbackToNotifications: true });
         });
-        updateNotificationState();
     };
 
     // Picture Preview on Image Selection (Used for: uploading new post, updating profile)
