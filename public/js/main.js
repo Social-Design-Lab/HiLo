@@ -5,7 +5,7 @@ let isActive = false;
 let activeStartTime;
 let latestNotificationCount = 0;
 const currentUserId = $('meta[name="current-user-id"]').attr('content') || 'anonymous';
-const shownNotificationStorageKey = `shownNotificationKeys:${currentUserId}`;
+const shownNotificationStorageKeyBase = `shownNotificationKeys:${currentUserId}`;
 let activeNotificationPopupKey = null;
 let scheduledNotificationTimers = {};
 
@@ -28,9 +28,13 @@ function resetActiveTimer(loggingOut) {
     }
 }
 
+function getShownNotificationStorageKey() {
+    return `${shownNotificationStorageKeyBase}:${window.hiloConditionStartMs || 'no-session'}`;
+}
+
 function getShownNotificationKeys() {
     try {
-        return JSON.parse(localStorage.getItem(shownNotificationStorageKey) || '{}');
+        return JSON.parse(localStorage.getItem(getShownNotificationStorageKey()) || '{}');
     } catch (err) {
         return {};
     }
@@ -40,7 +44,7 @@ function markNotificationShown(key) {
     if (!key) return;
     const shown = getShownNotificationKeys();
     shown[key] = true;
-    localStorage.setItem(shownNotificationStorageKey, JSON.stringify(shown));
+    localStorage.setItem(getShownNotificationStorageKey(), JSON.stringify(shown));
 }
 
 function logPageEvent(path) {
@@ -151,7 +155,7 @@ function positionNotificationPopover(popover) {
 
 function showNotificationPopup(notification) {
     activeNotificationPopupKey = notification.key;
-    if (notification.activity && notification.activity.stats) {
+    if (notification.activity && notification.activity.stats && !notification.countAlreadyIncluded) {
         const unreadIncrement = Number(notification.activity.unreadIncrement || 1);
         latestNotificationCount += Number.isFinite(unreadIncrement) ? unreadIncrement : 1;
         updateNotificationBell(latestNotificationCount);
@@ -205,7 +209,14 @@ function showNotificationPopup(notification) {
         margin: 0
     });
 
-    popup.find('.feed-notification-popover-title').text(notification.message);
+    const messages = Array.isArray(notification.messages) && notification.messages.length ?
+        notification.messages :
+        [notification.message];
+    const title = popup.find('.feed-notification-popover-title');
+    title.empty();
+    messages.forEach(function(message) {
+        $('<div></div>').text(message || '').appendTo(title);
+    });
     popup.find('.feed-notification-popover-summary').text(notification.summary || '');
 
     $('body').append(popup);
@@ -227,7 +238,12 @@ function applyNotificationActivity(notification) {
     window.appliedPopupNotificationActivity[notification.key] = true;
 
     if (typeof window.applyUserPostNotificationActivity === 'function') {
-        window.applyUserPostNotificationActivity(notification.activity);
+        const activities = Array.isArray(notification.activities) && notification.activities.length ?
+            notification.activities :
+            [notification.activity];
+        activities.forEach(function(activity) {
+            window.applyUserPostNotificationActivity(activity);
+        });
     }
 }
 
@@ -273,6 +289,26 @@ function updateNotificationState() {
         const bellActivityCount = Number(json.unreadCount !== undefined ? json.unreadCount : json.count) || 0;
 
         updateNotificationBell(bellActivityCount);
+        if (window.location.pathname !== '/notifications' && bellActivityCount > 0) {
+            const shown = getShownNotificationKeys();
+            const latestDueNotification = scheduledPopupNotifications
+                .filter(function(notification) {
+                    const scheduledTime = Number(notification.time);
+                    return notification &&
+                        notification.key &&
+                        !shown[notification.key] &&
+                        Number.isFinite(scheduledTime) &&
+                        scheduledTime <= Date.now();
+                })
+                .sort(function(a, b) {
+                    return Number(b.time) - Number(a.time);
+                })[0];
+
+            if (latestDueNotification) {
+                latestDueNotification.countAlreadyIncluded = true;
+                queueNotificationPopup(latestDueNotification, false);
+            }
+        }
         scheduledPopupNotifications.forEach(scheduleNotificationPopup);
     });
 }

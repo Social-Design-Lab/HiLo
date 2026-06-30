@@ -275,7 +275,62 @@ function buildScheduledPopupNotifications(notificationFeed, user, currentConditi
         });
     }
 
-    return scheduled.sort((a, b) => a.time - b.time);
+    return combineScheduledPopupNotifications(scheduled);
+}
+
+function combineScheduledPopupNotifications(notifications) {
+    const sortedNotifications = notifications.sort((a, b) => {
+        if (a.time !== b.time) return a.time - b.time;
+        if (a.postID !== b.postID) return String(a.postID).localeCompare(String(b.postID));
+        if (a.action === b.action) return 0;
+        return a.action === 'like' ? -1 : 1;
+    });
+    const groups = new Map();
+
+    for (const notification of sortedNotifications) {
+        const key = `${notification.time}_${notification.postID}`;
+        if (!groups.has(key)) {
+            groups.set(key, []);
+        }
+        groups.get(key).push(notification);
+    }
+
+    const combined = [];
+    for (const group of groups.values()) {
+        if (group.length === 1) {
+            combined.push(group[0]);
+            continue;
+        }
+
+        const activities = group
+            .map(notification => notification.activity)
+            .filter(Boolean);
+        const latestStatsActivity = activities
+            .filter(activity => activity.stats)
+            .sort((a, b) => (b.stats.activityCount || 0) - (a.stats.activityCount || 0))[0];
+        const unreadIncrement = activities.reduce((total, activity) => {
+            const increment = Number(activity.unreadIncrement || 1);
+            return total + (Number.isFinite(increment) ? increment : 1);
+        }, 0);
+        const combinedKey = group.map(notification => notification.key).join('__');
+
+        combined.push({
+            key: combinedKey,
+            action: 'combined',
+            postID: group[0].postID,
+            time: group[0].time,
+            activities,
+            activity: {
+                unreadIncrement,
+                stats: latestStatsActivity && latestStatsActivity.stats
+            },
+            summary: latestStatsActivity ? formatActivitySummary(latestStatsActivity.stats) : group[0].summary,
+            message: group.map(notification => notification.message).join('\n'),
+            messages: group.map(notification => notification.message)
+        });
+    }
+
+    return combined;
 }
 
 /**
