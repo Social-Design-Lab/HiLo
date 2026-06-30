@@ -564,7 +564,8 @@ exports.getNotifications = async(req, res) => {
             });
 
             const userPosts = (user.getPosts().slice(0) || [])
-                .filter(post => String(post.condition || "") === currentCondition);
+                .filter(post => String(post.condition || "") === currentCondition)
+                .slice(0, 1);
 
             const repliesOnActorPosts = user.feedAction
                 .filter(post => (post.comments.filter(comment => comment.new_comment == true).length) > 0)

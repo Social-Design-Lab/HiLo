@@ -185,7 +185,7 @@ exports.getScript = async (req, res, next) => {
     // const currentCondition = computeCondition(user.createdAt, 15000, 4); // 15000 for testing, 180000 for real
     const currentConditionPosts = user.posts
       .filter(post => String(post.condition) === String(currentCondition))
-      .sort((a, b) => b.absTime - a.absTime);
+      .sort((a, b) => new Date(b.absTime).getTime() - new Date(a.absTime).getTime());
 
     if (currentSession <= 4 && currentConditionPosts.length === 0) {
       user.conditionStart = null;
@@ -371,6 +371,7 @@ exports.newPost = async(req, res, next) => {
                 relativeTime: currDate - user.createdAt,
             };
 
+            user.posts = user.posts.filter(existingPost => String(existingPost.condition) !== String(currentCondition));
             user.posts.unshift(post); // Add most recent user-made post to the beginning of the array
             user.conditionStart = null;
             await user.save();

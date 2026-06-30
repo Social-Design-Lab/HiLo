@@ -3,7 +3,7 @@ const validator = require('validator');
 const dotenv = require('dotenv');
 dotenv.config({ path: '.env' }); // See the file .env.example for the structure of .env
 const User = require('../models/User');
-const { getConditionOrder, getConditionOrderLabel, normalizeOrderNumber } = require('../lib/conditionOrder');
+const { getConditionOrder, getConditionOrderLabel, getConditionForSession, getCurrentSession, normalizeOrderNumber } = require('../lib/conditionOrder');
 
 /**
  * GET /login
@@ -61,7 +61,7 @@ exports.postLogin = async (req, res, next) => {
                 "";
             const currDate = Date.now();
             user = new User({
-                username: `Researcher_${mturkID}`,
+                username: mturkID,
                 mturkID: mturkID,
                 studyDate,
                 email: mturkID,
@@ -286,10 +286,13 @@ exports.getAccount = (req, res) => {
  * GET /me
  * Render user's profile page.
  */
-exports.getMe = async(req, res) => {
+exports.getMe = async(req, res, next) => {
     try {
         const user = await User.findById(req.user.id).populate('posts.comments.actor').exec();
-        const allPosts = user.getPosts();
+        const currentCondition = String(getConditionForSession(user, getCurrentSession(user)) || "");
+        const allPosts = user.getPosts()
+            .filter(post => String(post.condition || "") === currentCondition)
+            .slice(0, 1);
         res.render('me', { posts: allPosts, title: user.profile.name || user.email || user.id });
     } catch (err) {
         next(err);

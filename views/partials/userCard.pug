@@ -5,8 +5,8 @@
     else
       img(src=user.gravatar(60))
   .content
-    a.header(href='/me')= user.profile.name || user.email || user.id
-    .meta="@"+user.username
+    a.header(href='/me')= user.profile.name || user.mturkID || user.email || user.id
+    .meta="@"+(user.mturkID || user.username)
     .description(style='white-space: pre-wrap')=user.profile.bio
     if user.profile.location
       .description(style="margin-top: 5px;")

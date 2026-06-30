@@ -6,8 +6,11 @@ let activeStartTime;
 let latestNotificationCount = 0;
 const currentUserId = $('meta[name="current-user-id"]').attr('content') || 'anonymous';
 const shownNotificationStorageKeyBase = `shownNotificationKeys:${currentUserId}`;
+const conditionWindowMs = 180000;
 let activeNotificationPopupKey = null;
 let scheduledNotificationTimers = {};
+let conditionTimerID = null;
+let conditionRedirectCheck = null;
 
 function resetActiveTimer(loggingOut) {
     if (isActive) {
@@ -46,6 +49,40 @@ function markNotificationShown(key) {
     shown[key] = true;
     localStorage.setItem(getShownNotificationStorageKey(), JSON.stringify(shown));
 }
+
+function getConditionState(clientStart, windowMs) {
+    if (!clientStart) return 'pre';
+    const elapsed = Date.now() - Number(clientStart);
+
+    if (elapsed < 0) return 'pre';
+    if (elapsed >= windowMs) return 'post';
+    return 'active';
+}
+
+function startGlobalConditionTimer(conditionStartMs) {
+    window.hiloConditionStartMs = Number(conditionStartMs);
+    if (!Number.isFinite(window.hiloConditionStartMs) || window.hiloConditionStartMs <= 0) return;
+
+    if (conditionTimerID) clearTimeout(conditionTimerID);
+
+    conditionRedirectCheck = function() {
+        if (getConditionState(window.hiloConditionStartMs, conditionWindowMs) === 'post') {
+            if (window.location.pathname !== '/') {
+                window.location.href = '/';
+            } else {
+                window.location.reload();
+            }
+            return;
+        }
+
+        const remaining = Math.max(250, window.hiloConditionStartMs + conditionWindowMs - Date.now());
+        conditionTimerID = window.setTimeout(conditionRedirectCheck, Math.min(remaining, 3000));
+    };
+
+    conditionRedirectCheck();
+}
+
+window.handleSessionStart = startGlobalConditionTimer;
 
 function logPageEvent(path) {
     $.post("/pageLog", {
@@ -277,8 +314,8 @@ function startPendingSessionIfNeeded() {
         _csrf: $('meta[name="csrf-token"]').attr('content')
     }).done(function(json) {
         window.hiloPendingSessionStart = false;
-        if (json && json.conditionStartTime && typeof window.handleSessionStart === 'function') {
-            window.handleSessionStart(Number(json.conditionStartTime));
+        if (json && json.conditionStartTime) {
+            startGlobalConditionTimer(Number(json.conditionStartTime));
         }
     });
 }
@@ -343,6 +380,17 @@ $(window).on("load", function() {
         resetActiveTimer(true);
     });
 
+    $(window).on('focus.conditionTimer', function() {
+        if (typeof conditionRedirectCheck === 'function') {
+            conditionRedirectCheck();
+        }
+    });
+    $(document).on('visibilitychange.conditionTimer', function() {
+        if (!document.hidden && typeof conditionRedirectCheck === 'function') {
+            conditionRedirectCheck();
+        }
+    });
+
     /**
      * Other site functionalities:
      */
@@ -350,6 +398,9 @@ $(window).on("load", function() {
     $('#loading').hide();
     $('#content').fadeIn('slow', function() {
         if (window.location.pathname !== '/login' && window.location.pathname !== '/signup' && window.location.pathname !== '/forgot') {
+            if (window.hiloConditionStartMs) {
+                startGlobalConditionTimer(window.hiloConditionStartMs);
+            }
             startPendingSessionIfNeeded().always(function() {
                 updateNotificationState();
             });

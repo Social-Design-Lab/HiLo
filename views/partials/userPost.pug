@@ -7,7 +7,7 @@
       else
         img.ui.avatar.image(src=user.gravatar(60))
     a(href='/me')
-      span=user.profile.name || user.username || user.id
+      span=user.profile.name || user.mturkID || user.username || user.id
   .image
     img(src='/user_post/'+val.picture)
   .content
@@ -35,7 +35,7 @@
                   else
                     img.ui.avatar.image(src=user.gravatar(60))
                 .content
-                  a.author(href='/me')=user.profile.name || user.username || user.id
+                  a.author(href='/me')=user.profile.name || user.mturkID || user.username || user.id
                   .metadata
                     span.date=(comment.absTime.getTime())
                     //- .rating
@@ -66,9 +66,9 @@
     .ui.fluid.left.labeled.right.icon.input
       .ui.label
         if user.profile.picture
-          img.ui.avatar.image.small(src='/user_avatar/'+user.profile.picture, name=user.profile.name || user.username || user.id)
+          img.ui.avatar.image.small(src='/user_avatar/'+user.profile.picture, name=user.profile.name || user.mturkID || user.username || user.id)
         else
-          img.ui.avatar.image.small(src=user.gravatar(60), name=user.profile.name || user.username || user.id)            
+          img.ui.avatar.image.small(src=user.gravatar(60), name=user.profile.name || user.mturkID || user.username || user.id)            
       .ui.form
         .field 
           textarea.newcomment(type='text', placeholder='Write a Comment' rows='1')

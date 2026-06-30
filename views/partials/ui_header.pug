@@ -21,7 +21,7 @@
             else
               img.ui.mini.spaced.circular.image(src=user.gravatar(60))
             |
-            span(style="margin-right: 5px;")= user.profile.name || user.username || user.id
+            span(style="margin-right: 5px;")= user.profile.name || user.mturkID || user.username || user.id
             i.dropdown.icon
             .left.menu
               if user.consent

@@ -63,45 +63,5 @@ block scripts
     window.hiloPendingSessionStart = !{JSON.stringify(Boolean(pendingSessionStart))};
     window.hiloConditionStartMs = !{JSON.stringify(conditionStartTime ? conditionStartTime.getTime() : null)};
 
-    // Condition timing logic (client-side)
-    function getConditionState(clientStart, windowMs = 180000) {
-      if (!clientStart) return "pre";
-      const elapsed = Date.now() - clientStart;
-
-      if (elapsed < 0) return "pre";
-      if (elapsed >= windowMs) return "post";
-      return "active";
-    }
-
-    let conditionTimerID = null;
-    let lastState = getConditionState(window.hiloConditionStartMs);
-
-    window.handleSessionStart = function(conditionStartMs) {
-      window.hiloConditionStartMs = Number(conditionStartMs);
-      lastState = getConditionState(window.hiloConditionStartMs);
-      if (conditionTimerID) clearInterval(conditionTimerID);
-
-      // Only reload when crossing *edges*
-      conditionTimerID = setInterval(() => {
-        const newState = getConditionState(window.hiloConditionStartMs);
-
-        // PRE → ACTIVE   (start condition)
-        if (lastState === "pre" && newState === "active") {
-          window.location.href = "/";
-        }
-
-        // End the session once the full 3 minutes have elapsed.
-        if (newState === "post") {
-          window.location.href = "/";
-        }
-
-        lastState = newState;
-      }, 3000);
-    };
-
-    if (window.hiloConditionStartMs) {
-      window.handleSessionStart(window.hiloConditionStartMs);
-    }
-
   script(src='/public/js/script.js')
   script(src='/public/js/postFunctionalities.js')
