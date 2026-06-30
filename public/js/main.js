@@ -6,8 +6,7 @@ let activeStartTime;
 let latestNotificationCount = 0;
 const currentUserId = $('meta[name="current-user-id"]').attr('content') || 'anonymous';
 const shownNotificationStorageKey = `shownNotificationKeys:${currentUserId}`;
-let notificationPopupQueue = [];
-let notificationPopupVisible = false;
+let activeNotificationPopupKey = null;
 let scheduledNotificationTimers = {};
 
 function resetActiveTimer(loggingOut) {
@@ -44,24 +43,10 @@ function markNotificationShown(key) {
     localStorage.setItem(shownNotificationStorageKey, JSON.stringify(shown));
 }
 
-function hasActiveNotificationPopup() {
-    return notificationPopupVisible || notificationPopupQueue.length > 0;
-}
-
 function logPageEvent(path) {
     $.post("/pageLog", {
         path,
         _csrf: $('meta[name="csrf-token"]').attr('content')
-    });
-}
-
-function closeNotificationPopup(key) {
-    const popup = $(`.feed-notification-modal-overlay[data-notification-key='${key}']`);
-    popup.fadeOut(150, function() {
-        $(this).remove();
-        notificationPopupVisible = false;
-        showNextNotificationPopup();
-        updateNotificationBell(latestNotificationCount);
     });
 }
 
@@ -115,108 +100,121 @@ function updateNotificationBell(count) {
     });
 }
 
-function goToUserPost(postID, key) {
-    closeNotificationPopup(key);
-    const target = $(`#user-post-${postID}`);
-
-    if (target.length) {
-        $('html, body').animate({ scrollTop: target.offset().top - 90 }, 250);
-    } else {
-        window.location.href = `/#user-post-${postID}`;
-    }
-}
-
 function queueNotificationPopup(notification, force) {
     const shown = getShownNotificationKeys();
     if (!notification || !notification.key || (!force && shown[notification.key])) return;
-    if (notificationPopupQueue.some(item => item.key === notification.key)) return;
-    if ($(`.feed-notification-modal-overlay[data-notification-key='${notification.key}']`).length) return;
+    if (activeNotificationPopupKey === notification.key) return;
 
     if (!force) {
         markNotificationShown(notification.key);
     }
-    notificationPopupQueue.push(notification);
-    showNextNotificationPopup();
-    updateNotificationBell(latestNotificationCount);
+    showNotificationPopup(notification);
 }
 
-function showNextNotificationPopup() {
-    if (notificationPopupVisible || notificationPopupQueue.length === 0) return;
+function getNotificationBellAnchor() {
+    const links = $("a.item[href='/notifications']");
+    const visibleLinks = links.filter(':visible');
+    return visibleLinks.length ? visibleLinks.last() : links.last();
+}
 
-    const notification = notificationPopupQueue.shift();
-    notificationPopupVisible = true;
+function positionNotificationPopover(popover) {
+    if (!popover || !popover.length) return;
+
+    const bell = getNotificationBellAnchor();
+    const width = Math.min(window.innerWidth < 600 ? 240 : 280, window.innerWidth - 24);
+
+    if (!bell.length) {
+        popover.css({
+            top: '58px',
+            right: '12px',
+            left: 'auto',
+            width: `${width}px`
+        });
+        return;
+    }
+
+    const rect = bell[0].getBoundingClientRect();
+    const bellCenter = rect.left + (rect.width / 2);
+    const left = Math.min(
+        Math.max(12, bellCenter - (width / 2)),
+        Math.max(12, window.innerWidth - width - 12)
+    );
+    const top = rect.bottom + 6;
+
+    popover.css({
+        top: `${top}px`,
+        left: `${left}px`,
+        right: 'auto',
+        width: `${width}px`
+    });
+}
+
+function showNotificationPopup(notification) {
+    activeNotificationPopupKey = notification.key;
     if (notification.activity && notification.activity.stats) {
-        latestNotificationCount = notification.activity.stats.activityCount;
+        const unreadIncrement = Number(notification.activity.unreadIncrement || 1);
+        latestNotificationCount += Number.isFinite(unreadIncrement) ? unreadIncrement : 1;
         updateNotificationBell(latestNotificationCount);
     }
 
+    $('.feed-notification-popover').remove();
+
     const popup = $(`
-        <div class="feed-notification-modal-overlay" style="display: none;">
-            <div class="feed-notification-modal-card">
-                <div class="feed-notification-modal-title"></div>
-                <div class="feed-notification-modal-summary"></div>
-                <div class="feed-notification-modal-actions">
-                    <button type="button" class="ui primary button go-to-post">Go to Post</button>
-                    <button type="button" class="ui button dismiss-notification">Dismiss</button>
-                </div>
-            </div>
+        <div class="feed-notification-popover" style="display: none;">
+            <div class="feed-notification-popover-arrow"></div>
+            <div class="feed-notification-popover-title"></div>
+            <div class="feed-notification-popover-summary"></div>
         </div>
     `);
 
     popup.attr('data-notification-key', notification.key);
     popup.css({
         position: 'fixed',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
         zIndex: 3000,
-        background: 'rgba(0, 0, 0, .55)',
-        display: 'none',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '24px'
-    });
-    popup.find('.feed-notification-modal-card').css({
-        width: 'min(520px, 100%)',
         background: '#fff',
         borderRadius: '8px',
-        boxShadow: '0 18px 44px rgba(0,0,0,.28)',
-        padding: '32px',
-        textAlign: 'center'
+        boxShadow: '0 8px 20px rgba(0,0,0,.18)',
+        border: '1px solid rgba(34,36,38,.18)',
+        padding: '10px 12px',
+        textAlign: 'left',
+        pointerEvents: 'none',
+        maxHeight: '96px',
+        overflow: 'hidden'
     });
-    popup.find('.feed-notification-modal-title').css({
-        fontSize: '28px',
+    popup.find('.feed-notification-popover-arrow').css({
+        position: 'absolute',
+        top: '-7px',
+        left: '50%',
+        width: '12px',
+        height: '12px',
+        background: '#fff',
+        borderLeft: '1px solid rgba(34,36,38,.18)',
+        borderTop: '1px solid rgba(34,36,38,.18)',
+        transform: 'translateX(-50%) rotate(45deg)'
+    });
+    popup.find('.feed-notification-popover-title').css({
+        fontSize: '14px',
         lineHeight: '1.25',
         fontWeight: '700',
-        marginBottom: '14px'
+        marginBottom: '3px'
     });
-    popup.find('.feed-notification-modal-summary').css({
-        fontSize: '18px',
-        lineHeight: '1.45',
+    popup.find('.feed-notification-popover-summary').css({
+        fontSize: '12px',
+        lineHeight: '1.3',
         color: '#555',
-        marginBottom: '24px'
-    });
-    popup.find('.feed-notification-modal-actions').css({
-        display: 'flex',
-        gap: '12px',
-        justifyContent: 'center',
-        flexWrap: 'wrap'
+        margin: 0
     });
 
-    popup.find('.feed-notification-modal-title').text(notification.message);
-    popup.find('.feed-notification-modal-summary').text(notification.summary || '');
-    popup.find('.go-to-post').on('click', function() {
-        logPageEvent(`/notification-popup/go-to-post/${notification.postID}`);
-        goToUserPost(notification.postID, notification.key);
-    });
-    popup.find('.dismiss-notification').on('click', function() {
-        logPageEvent(`/notification-popup/dismiss/${notification.postID}`);
-        closeNotificationPopup(notification.key);
-    });
+    popup.find('.feed-notification-popover-title').text(notification.message);
+    popup.find('.feed-notification-popover-summary').text(notification.summary || '');
 
     $('body').append(popup);
-    popup.css('display', 'flex').hide().fadeIn(150, function() {
+    positionNotificationPopover(popup);
+    $(window).off('resize.notificationPopover').on('resize.notificationPopover', function() {
+        positionNotificationPopover($('.feed-notification-popover'));
+    });
+
+    popup.fadeIn(150, function() {
         applyNotificationActivity(notification);
     });
 }
@@ -246,6 +244,10 @@ function scheduleNotificationPopup(notification) {
 
     scheduledNotificationTimers[notification.key] = window.setTimeout(function() {
         delete scheduledNotificationTimers[notification.key];
+        if (window.location.pathname === '/notifications') {
+            window.location.reload();
+            return;
+        }
         queueNotificationPopup(notification, false);
     }, delay);
 }
@@ -265,26 +267,13 @@ function startPendingSessionIfNeeded() {
     });
 }
 
-function updateNotificationState(options) {
-    const settings = options || {};
+function updateNotificationState() {
     return $.getJSON("/notifications", { bell: true }, function(json) {
-        const popupNotifications = json.popupNotifications || [];
         const scheduledPopupNotifications = json.scheduledPopupNotifications || [];
-        const notificationsToPopup = settings.forcePopup ?
-            popupNotifications :
-            [];
-        const bellActivityCount = Number(json.activityCount !== undefined ? json.activityCount : json.count) || 0;
+        const bellActivityCount = Number(json.unreadCount !== undefined ? json.unreadCount : json.count) || 0;
 
         updateNotificationBell(bellActivityCount);
         scheduledPopupNotifications.forEach(scheduleNotificationPopup);
-
-        if (window.location.pathname !== '/notifications') {
-            notificationsToPopup.forEach(notification => queueNotificationPopup(notification, settings.forcePopup));
-        }
-
-        if (settings.fallbackToNotifications && popupNotifications.length === 0) {
-            window.location.href = '/notifications';
-        }
     });
 }
 
@@ -341,10 +330,6 @@ $(window).on("load", function() {
     // Check if user has any notifications.
     if (window.location.pathname !== '/login' && window.location.pathname !== '/signup' && window.location.pathname !== '/forgot') {
         logPageEvent(window.hiloPageLogPath || window.location.pathname);
-        $("a.item[href='/notifications']").on('click', function(event) {
-            event.preventDefault();
-            updateNotificationState({ forcePopup: true, fallbackToNotifications: true });
-        });
     };
 
     // Picture Preview on Image Selection (Used for: uploading new post, updating profile)

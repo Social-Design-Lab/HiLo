@@ -220,6 +220,7 @@ function buildScheduledPopupNotifications(notificationFeed, user, currentConditi
                     type: 'like',
                     postID: groupFirstLike.postID,
                     count: cumulativeLikes,
+                    unreadIncrement: 1,
                     stats,
                     key
                 },
@@ -260,6 +261,7 @@ function buildScheduledPopupNotifications(notificationFeed, user, currentConditi
                 commentID: `scheduled_${replyEvent.notification._id}`,
                 body: replyEvent.replyBody,
                 at: replyEvent.time,
+                unreadIncrement: 1,
                 stats,
                 key,
                 actor: {
@@ -331,6 +333,7 @@ exports.getNotifications = async(req, res) => {
                 .exec();
 
             let final_notify = [];
+            const userPostLikeTotals = {};
             for (const notification of notification_feed) {
                 //Notification is about a userPost (read, like, comment)
                 if (notification.userPostID >= 0) {
@@ -371,52 +374,56 @@ exports.getNotifications = async(req, res) => {
                                 unreadNotification: replyAbsTime > lastNotifyVisit,
                             };
                             final_notify.push(reply_tmp);
-                        } //end of REPLY 
-                        else {
-                            const key = notification.notificationType + "_" + currentCondition + "_" + postID; //like_condition_post
-                            //Check if a notification for this post exists already
-                            let notifyIndex = _.findIndex(final_notify, function(o) { return o.key == key });
-                            if (notifyIndex == -1) {
-                                let tmp = {
-                                    key: key,
-                                    action: notification.notificationType,
-                                    postID,
-                                    body: userPost.body,
-                                    picture: userPost.picture,
-                                    time: userPost.absTime.getTime() + notification.time,
-                                    actors: [notification.actor],
-                                    unreadNotification: userPost.absTime.getTime() + notification.time > lastNotifyVisit
-                                }
-                                if (notification.notificationType == 'like') {
-                                    tmp.numLikes = 1
-                                }
-                                notifyIndex = final_notify.push(tmp) - 1;
-                            } else {
-                                //Update notification like count.
-                                if (notification.notificationType == 'like') {
-                                    final_notify[notifyIndex].numLikes += 1;
-                                }
-                                //Update notification actor profile
-                                //if generic-joe, append. else, shift to the front of the line.
-                                const notificationAbsTime = userPost.absTime.getTime() + notification.time;
-                                addActorByRecency(final_notify[notifyIndex], notification.actor, notificationAbsTime, notification.notificationType);
-                                //Update notification time and read/unread classification
-                                if (notificationAbsTime > final_notify[notifyIndex].time) {
-                                    final_notify[notifyIndex].time = notificationAbsTime;
-                                }
-                                if (notificationAbsTime > lastNotifyVisit) {
-                                    final_notify[notifyIndex].unreadNotification = true;
-                                }
-                            }
-                            //Update the number of likes on user post
-                            if (notification.notificationType == 'like') {
-                                const postIndex = notification.condition ?
-                                    _.findIndex(user.posts, function(o) { return String(o.condition) == String(notification.condition); }) :
-                                    _.findIndex(user.posts, function(o) { return o.postID == userPostID; });
-                                if (postIndex !== -1) {
-                                    user.posts[postIndex].likes = final_notify[notifyIndex].numLikes;
-                                }
-                            }
+	                        } //end of REPLY 
+	                        else {
+	                            const notificationAbsTime = userPost.absTime.getTime() + notification.time;
+	                            const key = notification.notificationType === 'like' ?
+	                                `${notification.notificationType}_${currentCondition}_${postID}_${notificationAbsTime}` :
+	                                `${notification.notificationType}_${currentCondition}_${postID}`;
+	                            //Check if a notification for this post exists already
+	                            let notifyIndex = _.findIndex(final_notify, function(o) { return o.key == key });
+	                            if (notifyIndex == -1) {
+	                                let tmp = {
+	                                    key: key,
+	                                    action: notification.notificationType,
+	                                    postID,
+	                                    body: userPost.body,
+	                                    picture: userPost.picture,
+	                                    time: notificationAbsTime,
+	                                    actors: [notification.actor],
+	                                    unreadNotification: notificationAbsTime > lastNotifyVisit
+	                                }
+	                                if (notification.notificationType == 'like') {
+	                                    tmp.numLikes = 1
+	                                }
+	                                notifyIndex = final_notify.push(tmp) - 1;
+	                            } else {
+	                                //Update notification like count.
+	                                if (notification.notificationType == 'like') {
+	                                    final_notify[notifyIndex].numLikes += 1;
+	                                }
+	                                //Update notification actor profile
+	                                //if generic-joe, append. else, shift to the front of the line.
+	                                addActorByRecency(final_notify[notifyIndex], notification.actor, notificationAbsTime, notification.notificationType);
+	                                //Update notification time and read/unread classification
+	                                if (notificationAbsTime > final_notify[notifyIndex].time) {
+	                                    final_notify[notifyIndex].time = notificationAbsTime;
+	                                }
+	                                if (notificationAbsTime > lastNotifyVisit) {
+	                                    final_notify[notifyIndex].unreadNotification = true;
+	                                }
+	                            }
+	                            //Update the number of likes on user post
+	                            if (notification.notificationType == 'like') {
+	                                const likeTotalKey = `${currentCondition}_${postID}`;
+	                                userPostLikeTotals[likeTotalKey] = (userPostLikeTotals[likeTotalKey] || 0) + 1;
+	                                const postIndex = notification.condition ?
+	                                    _.findIndex(user.posts, function(o) { return String(o.condition) == String(notification.condition); }) :
+	                                    _.findIndex(user.posts, function(o) { return o.postID == userPostID; });
+	                                if (postIndex !== -1) {
+	                                    user.posts[postIndex].likes = userPostLikeTotals[likeTotalKey];
+	                                }
+	                            }
                         } //end of LIKE or READ
                     } //end of userPost (read, like, comment)
                 } //Notification is about a userReply (read, like)
@@ -517,6 +524,13 @@ exports.getNotifications = async(req, res) => {
 
             const unreadNotifications = final_notify.filter(notification => notification.unreadNotification == true);
             const newNotificationCount = unreadNotifications.length;
+            const unreadLikeCount = unreadNotifications
+                .filter(notification => notification.action === 'like')
+                .reduce((total, notification) => total + (notification.numLikes || 0), 0);
+            const unreadCommentCount = unreadNotifications
+                .filter(notification => notification.action === 'reply')
+                .length;
+            const unreadActivityCount = unreadLikeCount + unreadCommentCount;
             const latestUnreadNotificationTime = unreadNotifications.reduce(function(latest, notification) {
                 return Math.max(latest, notification.time || 0);
             }, 0);
@@ -531,10 +545,13 @@ exports.getNotifications = async(req, res) => {
             const scheduledPopupNotifications = buildScheduledPopupNotifications(notification_feed, user, currentCondition);
             if (req.query.bell) {
                 return res.send({
-                    count: totalActivityCount,
+                    count: newNotificationCount,
                     likeCount: totalLikeCount,
                     commentCount: totalCommentCount,
                     activityCount: totalActivityCount,
+                    unreadActivityCount,
+                    unreadLikeCount,
+                    unreadCommentCount,
                     unreadCount: newNotificationCount,
                     latestNotificationTime: latestUnreadNotificationTime,
                     popupNotifications,
@@ -544,7 +561,7 @@ exports.getNotifications = async(req, res) => {
                 return res.render('notification', {
                     notification_feed: final_notify,
                     script: finalfeed,
-                    count: totalActivityCount
+                    count: final_notify.length
                 })
             }
         };
