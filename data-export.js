@@ -42,15 +42,7 @@ const PARTICIPANT_COLUMNS = [
     'TotalTimeMakePost_PH',
     'TotalTimeMakePost_PL',
     'TotalTimeMakePost_NH',
-    'TotalTimeMakePost_NL',
-    'TotalDismissClick_PH',
-    'TotalDismissClick_PL',
-    'TotalDismissClick_NH',
-    'TotalDismissClick_NL',
-    'TotalGotoPostClicks_PH',
-    'TotalGotoPostClicks_PL',
-    'TotalGotoPostClicks_NH',
-    'TotalGotoPostClicks_NL'
+    'TotalTimeMakePost_NL'
 ];
 
 const PARTICIPANT_VARIABLES = [
@@ -82,15 +74,7 @@ const PARTICIPANT_VARIABLES = [
     ['TotalTimeMakePost_PH', 'Time spent on make-a-post page in positive high support condition (1), in seconds'],
     ['TotalTimeMakePost_PL', 'Time spent on make-a-post page in positive low support condition (2), in seconds'],
     ['TotalTimeMakePost_NH', 'Time spent on make-a-post page in negative high support condition (3), in seconds'],
-    ['TotalTimeMakePost_NL', 'Time spent on make-a-post page in negative low support condition (4), in seconds'],
-    ['TotalDismissClick_PH', 'Total number of clicks on the dismiss button for the notification pop-up in the positive high support condition (1)'],
-    ['TotalDismissClick_PL', 'Total number of clicks on the dismiss button for the notification pop-up in the positive low condition (2)'],
-    ['TotalDismissClick_NH', 'Total number of clicks on the dismiss button for the notification pop-up in the negative high condition (3)'],
-    ['TotalDismissClick_NL', 'Total number of clicks on the dismiss button for the notification pop-up in the negative low condition (4)'],
-    ['TotalGotoPostClicks_PH', 'Total number of clicks on the Go to Post button for the notification pop-up in the positive high condition (1)'],
-    ['TotalGotoPostClicks_PL', 'Total number of clicks on the Go to Post button for the notification pop-up in the positive low condition (2)'],
-    ['TotalGotoPostClicks_NH', 'Total number of clicks on the Go to Post button for the notification pop-up in the negative high condition (3)'],
-    ['TotalGotoPostClicks_NL', 'Total number of clicks on the Go to Post button for the notification pop-up in the negative low condition (4)']
+    ['TotalTimeMakePost_NL', 'Time spent on make-a-post page in negative low support condition (4), in seconds']
 ];
 
 const PARTICIPANT_COMMENT_COLUMNS = ['ParticipantID', 'ActorID', 'PostID', 'Comment'];
@@ -338,8 +322,6 @@ function participantSummaryRows(users) {
             );
             record[`TotalNotifCheck_${suffix}`] = countPageEvents(user, page => page === '/notifications', window);
             record[`TotalTimeMakePost_${suffix}`] = seconds(makePostTime(user, condition));
-            record[`TotalDismissClick_${suffix}`] = countPageEvents(user, page => page.startsWith('/notification-popup/dismiss/'), window);
-            record[`TotalGotoPostClicks_${suffix}`] = countPageEvents(user, page => page.startsWith('/notification-popup/go-to-post/'), window);
         }
 
         rows.push(PARTICIPANT_COLUMNS.map(column => record[column] ?? 0));
