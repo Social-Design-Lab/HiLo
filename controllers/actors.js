@@ -77,7 +77,8 @@ exports.getActor = async(req, res, next) => {
             populate: { path: "profile", select: "name picture" },
         })
         .exec();
-        applyActorPostDisplayTimes(script_feed, user);
+        const renderTimingUser = user.conditionStart ? { createdAt: user.conditionStart } : user;
+        applyActorPostDisplayTimes(script_feed, renderTimingUser);
 
         const finalfeed = helpers.getFeed([], script_feed, user, 'CHRONOLOGICAL', (process.env.REMOVE_FLAGGED_CONTENT == 'TRUE'), false);
         await user.save();

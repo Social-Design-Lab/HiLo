@@ -26,6 +26,7 @@ var posts_list;
 var comment_list;
 var notification_list;
 var notification_reply_list;
+const WEEK_IN_MS = 7 * 24 * 60 * 60 * 1000;
 
 dotenv.config({ path: '.env' });
 
@@ -187,6 +188,9 @@ async function doPopulate() {
                                 time: timeStringToNum(new_post.time),
                                 class: new_post.class,
                                 condition: new_post.condition
+                            }
+                            if (hasValue(new_post.display_time)) {
+                                postdetail.display_time = getRandomPastWeekDisplayTime();
                             }
 
                             const script = new Script(postdetail);
@@ -428,6 +432,14 @@ function timeStringToNum(v) {
     const milliseconds = (minutes * 60000) + (seconds * 1000);
     return negative ? -milliseconds : milliseconds;
 };
+
+function hasValue(v) {
+    return v !== undefined && v !== null && String(v).trim() !== '';
+}
+
+function getRandomPastWeekDisplayTime() {
+    return -Math.floor(Math.random() * WEEK_IN_MS);
+}
 
 //Create a random number (for the number of likes) with a weighted distrubution
 //This is for posts
